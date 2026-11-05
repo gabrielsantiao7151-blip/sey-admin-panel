@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Viaje · SEU</title>
+  <link rel="icon" href="assets/logo.png">
+  <link rel="stylesheet" href="css/app.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+</head>
+<body>
+  <main id="page" hidden>
+    <header class="page-head">
+      <div>
+        <p class="eyebrow"><a href="trips.html">Viajes y mapa</a></p>
+        <h1 id="title">Viaje</h1>
+      </div>
+      <div id="badges"></div>
+    </header>
+    <div id="detail"><p class="state">Cargando…</p></div>
+  </main>
+  <script src="js/format.js"></script>
+  <script src="js/session.js"></script>
+  <script src="js/api.js"></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    if (!Session.mount('trips')) throw new Error('sin sesión');
+    const id = Session.query().get('id');
+    const root = document.getElementById('detail');
+
+    function point(place, letter, color) {
+      if (!place || place.lat == null || place.lng == null || !window.L) return null;
+      const icon = L.divIcon({
+        className: 'pin-icon',
+        html: `<span class="pin" style="background:${color}">${letter}</span>`,
+        iconSize: [28, 28],
+        iconAnchor: [14, 14],
+      });
+      return L.marker([place.lat, place.lng], { icon });
+    }
+
+    function drawMap(trip) {
+      const holder = document.getElementById('trip-map');
+      if (!holder || !window.L) return;
+      const map = L.map(holder);
+      L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '&copy; OpenStreetMap',
+      }).addTo(map);
+      const markers = [];
+      const origin = point(trip.origin, 'A', '#143d2e');
+      const destination = point(trip.destination, 'B', '#1d4e89');
+      if (origin) { origin.addTo(map); markers.push(origin); }
+      if (destination) { destination.addTo(map); markers.push(destination); }
+      if (origin && destination) {
+        L.polyline([origin.getLatLng(), destination.getLatLng()], { color: '#143d2e', weight: 3 }).addTo(map);
+        map.fitBounds(L.featureGroup(markers).getBounds(), { padding: [28, 28] });
+      } else if (markers.length) {
+        map.setView(markers[0].getLatLng(), 14);
+      } else {
+        map.setView([4.71, -74.07], 12);
+      }
+      setTimeout(() => map.invalidateSize(), 150);
+    }
+
+    function render(trip) {
+      document.getElementById('title').textContent = trip.publicCode || 'Viaje';
+      document.title = `${trip.publicCode || 'Viaje'} · SEU`;
+      document.getElementById('badges').innerHTML = Fmt.trip(trip.status);
+      const fare = trip.fare || {};
+      const payment = trip.payment || {};
+      const stamps = trip.timestamps || {};
+      const cancel = trip.cancel;
+      const closed = ['completed', 'cancelled', 'expired'].includes(trip.status);
+      const ratings = (trip.ratings || []).map((item) => `
+        <li>${Fmt.esc(Fmt.side(item.side))} · ${Fmt.esc(item.rating)}/5
+          ${item.comment ? `· ${Fmt.esc(item.comment)}` : ''}
+          <span class="hint">${Fmt.esc(Fmt.when(item.createdAt))}</span>
+        </li>`).join('');
+      const receipt = trip.receipt;
+      root.innerHTML = `
+        ${payment.status === 'refund_pending' ? '<p class="callout">Reembolso pendiente. El panel solo lo muestra: no llama a un banco.</p>' : ''}
+        <section class="card">
+          <dl class="facts">
+            <div><dt>Cliente</dt><dd>${Fmt.text(trip.passenger && trip.passenger.fullName)}<br>${Fmt.text(trip.passenger && trip.passenger.phone)}</dd></div>
+            <div><dt>Conductor</dt><dd>${trip.driver && trip.driver.id ? `<a href="driver.html?id=${encodeURIComponent(trip.driver.id)}">${Fmt.text(trip.driver.fullName)}</a>` : '—'}${trip.driver && trip.driver.phone ? `<br>${Fmt.text(trip.driver.phone)}` : ''}</dd></div>
+            <div><dt>Vehículo</dt><dd>${trip.vehicle ? `${Fmt.text(trip.vehicle.plate)} · ${Fmt.text(trip.vehicle.brand)} ${Fmt.text(trip.vehicle.model)}` : '—'}</dd></div>
+            <div><dt>Categoría</dt><dd>${Fmt.esc(Fmt.category(trip.vehicleCategory))}</dd></div>
+            <div><dt>Origen</dt><dd>${Fmt.text(trip.origin && trip.origin.address)}</dd></div>
+            <div><dt>Destino</dt><dd>${Fmt.text(trip.destination && trip.destination.address)}</dd></div>
+            <div><dt>Distancia</dt><dd>${Fmt.esc(Fmt.km(trip.distanceKm))}</dd></div>
+            <div><dt>Duración</dt><dd>${Fmt.esc(Fmt.minutes(trip.durationMin))}</dd></div>
+            <div><dt>Valor acordado</dt><dd>${fare.agreed == null ? '—' : Fmt.esc(Fmt.money(fare.agreed, fare.currency))}</dd></div>
+            <div><dt>Comisión</dt><dd>${fare.commission == null ? '—' : Fmt.esc(Fmt.money(fare.commission, fare.currency))}</dd></div>
+            <div><dt>Neto conductor</dt><dd>${fare.driverNet == null ? '—' : Fmt.esc(Fmt.money(fare.driverNet, fare.currency))}</dd></div>
+            <div><dt>Pago</dt><dd>${Fmt.esc(Fmt.payMethod(payment.method))} ${Fmt.payStatus(payment.status)}</dd></div>
+            <div><dt>Creado</dt><dd>${Fmt.esc(Fmt.when(stamps.createdAt || trip.createdAt))}</dd></div>
+            <div><dt>Asignado</dt><dd>${Fmt.esc(Fmt.when(stamps.assignedAt))}</dd></div>
+            <div><dt>Llegó al origen</dt><dd>${Fmt.esc(Fmt.when(stamps.arrivedAt))}</dd></div>
+            <div><dt>Inició</dt><dd>${Fmt.esc(Fmt.when(stamps.startedAt))}</dd></div>
+            <div><dt>Finalizó</dt><dd>${Fmt.esc(Fmt.when(stamps.finishedAt))}</dd></div>
+            <div><dt>Cancelado</dt><dd>${Fmt.esc(Fmt.when(stamps.cancelledAt))}</dd></div>
+          </dl>
+          <p class="links">
+            ${trip.conversationId ? `<a href="chat.html?id=${encodeURIComponent(trip.conversationId)}">Abrir chat</a>` : ''}
+            ${trip.passenger ? `<a href="client.html?id=${encodeURIComponent(trip.passenger.id)}">Ver cliente</a>` : ''}
+          </p>
+        </section>
+        <section class="card">
+          <h2>Recorrido</h2>
+          <div class="map-wrap"><div id="trip-map"></div></div>
+        </section>
+        ${cancel ? `<section class="card"><h2>Cancelación</h2><p>${Fmt.esc(Fmt.side(cancel.by))} · ${Fmt.text(cancel.reason)}</p><p class="hint">${Fmt.esc(Fmt.when(cancel.at))}</p></section>` : ''}
+        ${ratings ? `<section class="card"><h2>Calificaciones</h2><ul>${ratings}</ul></section>` : ''}
+        ${receipt ? `<section class="card"><h2>Recibo</h2><dl class="facts">
+          <div><dt>Emitido</dt><dd>${Fmt.esc(Fmt.when(receipt.issuedAt))}</dd></div>
+          <div><dt>Valor</dt><dd>${Fmt.esc(Fmt.money(receipt.fare, receipt.currency))}</dd></div>
+          <div><dt>Comisión</dt><dd>${Fmt.esc(Fmt.money(receipt.commission, receipt.currency))}</dd></div>
+          <div><dt>Neto</dt><dd>${Fmt.esc(Fmt.money(receipt.driverNet, receipt.currency))}</dd></div>
+          <div><dt>Cobrado</dt><dd>${Fmt.esc(Fmt.money(receipt.chargedAmount, receipt.currency))}</dd></div>
+          <div><dt>Método</dt><dd>${Fmt.esc(Fmt.payMethod(receipt.paymentMethod))}</dd></div>
+          <div><dt>Distancia</dt><dd>${Fmt.esc(Fmt.km(receipt.distanceKm))}</dd></div>
+          <div><dt>Duración</dt><dd>${Fmt.esc(Fmt.minutes(receipt.durationMin))}</dd></div>
+        </dl></section>` : ''}
+        ${closed ? '' : `<form id="cancel" class="card stack-form">
+          <h2>Cancelar viaje</h2>
+          <p class="hint">En curso, este es el único lado que puede cancelarlo.</p>
+          <label class="field">Motivo <input name="reason" required placeholder="El pasajero no aparece"></label>
+          <button class="btn danger" type="submit">Cancelar viaje</button>
+        </form>`}
+      `;
+      drawMap(trip);
+      const cancelForm = root.querySelector('#cancel');
+      if (cancelForm) {
+        cancelForm.addEventListener('submit', (event) => {
+          event.preventDefault();
+          const button = cancelForm.querySelector('button');
+          Session.lock(button, async () => {
+            try {
+              render(await Api.post(`/api/admin/trips/${id}/cancel`, { reason: cancelForm.reason.value.trim() }));
+              Session.toast('Viaje cancelado', 'ok');
+            } catch (err) {
+              Session.fail(err);
+              if (err.errorCode === 'INVALID_STATE') load();
+            }
+          });
+        });
+      }
+    }
+
+    async function load() {
+      if (!id) {
+        root.innerHTML = '<p class="state">Falta el viaje.</p>';
+        return;
+      }
+      root.innerHTML = '<p class="state">Cargando…</p>';
+      try {
+        render(await Api.get(`/api/admin/trips/${id}`));
+      } catch (err) {
+        root.innerHTML = '<p class="state">No se pudo cargar el viaje.</p>';
+        Session.fail(err);
+      }
+    }
+    load();
+  </script>
+</body>
+</html>

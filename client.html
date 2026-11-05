@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Cliente · SEU</title>
+  <link rel="icon" href="assets/logo.png">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <main id="page" hidden>
+    <header class="page-head">
+      <div>
+        <p class="eyebrow"><a href="clients.html">Clientes</a></p>
+        <h1 id="title">Cliente</h1>
+      </div>
+      <div id="badges"></div>
+    </header>
+    <section id="account" class="card"><p class="state">Cargando…</p></section>
+    <section class="card">
+      <div class="section-title"><h2>Viajes</h2></div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Código</th><th>Fecha</th><th>Conductor</th><th>Categoría</th>
+              <th>Estado</th><th>Valor</th><th>Pago</th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+      <nav id="pager" class="pager"></nav>
+    </section>
+  </main>
+  <script src="js/format.js"></script>
+  <script src="js/session.js"></script>
+  <script src="js/api.js"></script>
+  <script>
+    if (!Session.mount('clients')) throw new Error('sin sesión');
+    const id = Session.query().get('id');
+    let page = Number(Session.query().get('page')) || 1;
+
+    function paintTrips(trips) {
+      const items = (trips && trips.items) || [];
+      const body = document.getElementById('rows');
+      if (!items.length) body.innerHTML = Session.stateRow(7, 'No hay resultados');
+      else {
+        body.innerHTML = items.map((item) => {
+          const fare = item.fare || {};
+          return `
+            <tr data-href="trip.html?id=${encodeURIComponent(item.id)}" tabindex="0">
+              <td>${Fmt.text(item.publicCode)}</td>
+              <td>${Fmt.esc(Fmt.when(item.createdAt))}</td>
+              <td>${Fmt.text(item.driver && item.driver.fullName)}</td>
+              <td>${Fmt.esc(Fmt.category(item.vehicleCategory))}</td>
+              <td>${Fmt.trip(item.status)}</td>
+              <td>${fare.agreed == null ? '—' : Fmt.esc(Fmt.money(fare.agreed, fare.currency))}</td>
+              <td>${Fmt.esc(Fmt.payMethod(item.payment && item.payment.method))}</td>
+            </tr>`;
+        }).join('');
+      }
+      Session.renderPager(document.getElementById('pager'), trips || { page, total: 0, limit: Session.PAGE }, (next) => {
+        page = next;
+        load();
+      });
+    }
+
+    async function load() {
+      if (!id) {
+        document.getElementById('account').innerHTML = '<p class="state">Falta el cliente.</p>';
+        return;
+      }
+      document.getElementById('rows').innerHTML = Session.stateRow(7, 'Cargando…');
+      Session.replaceQuery({ id, page });
+      try {
+        const client = await Api.get(`/api/admin/clients/${id}`, { query: { page, limit: Session.PAGE } });
+        document.getElementById('title').textContent = client.fullName || 'Cliente';
+        document.title = `${client.fullName || 'Cliente'} · SEU`;
+        document.getElementById('badges').innerHTML = `${Fmt.account(client.status)} ${client.driverStatus ? Fmt.driver(client.driverStatus) : ''}`;
+        document.getElementById('account').innerHTML = `
+          <dl class="facts">
+            <div><dt>Teléfono</dt><dd>${Fmt.text(client.phone)}</dd></div>
+            <div><dt>Correo</dt><dd>${Fmt.text(client.email)}</dd></div>
+            <div><dt>Ciudad</dt><dd>${Fmt.text(client.city)}</dd></div>
+            <div><dt>País</dt><dd>${Fmt.text(client.countryCode)}</dd></div>
+            <div><dt>Calificación</dt><dd>${Fmt.esc(Fmt.rating(client.ratingAvg, client.ratingCount))}</dd></div>
+            <div><dt>Desde</dt><dd>${Fmt.esc(Fmt.when(client.createdAt))}</dd></div>
+          </dl>`;
+        paintTrips(client.trips);
+      } catch (err) {
+        document.getElementById('account').innerHTML = '<p class="state">No se pudo cargar el cliente.</p>';
+        document.getElementById('rows').innerHTML = Session.stateRow(7, 'No se pudo cargar');
+        Session.fail(err);
+      }
+    }
+    load();
+  </script>
+</body>
+</html>

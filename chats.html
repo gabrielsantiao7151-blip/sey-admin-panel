@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Chats · SEU</title>
+  <link rel="icon" href="assets/logo.png">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <main id="page" hidden>
+    <header class="page-head">
+      <div>
+        <p class="eyebrow">Mensajes</p>
+        <h1>Chats</h1>
+      </div>
+    </header>
+    <form id="filters" class="filters">
+      <label class="field">Estado <select name="status"></select></label>
+      <label class="field grow">Código de viaje <input name="q" placeholder="UB-10442"></label>
+      <button class="btn" type="submit">Filtrar</button>
+    </form>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Código</th><th>Pasajero</th><th>Conductor</th><th>Estado</th><th>Fecha</th></tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+    <nav id="pager" class="pager"></nav>
+  </main>
+  <script src="js/format.js"></script>
+  <script src="js/session.js"></script>
+  <script src="js/api.js"></script>
+  <script>
+    if (!Session.mount('chats')) throw new Error('sin sesión');
+    const filters = document.getElementById('filters');
+    filters.status.innerHTML = Fmt.selectOptions(Fmt.CHAT, '', 'Todos');
+    const initial = Session.query();
+    if (initial.get('status')) filters.status.value = initial.get('status');
+    if (initial.get('q')) filters.q.value = initial.get('q');
+    let page = Number(initial.get('page')) || 1;
+
+    async function load() {
+      document.getElementById('rows').innerHTML = Session.stateRow(5, 'Cargando…');
+      const query = { page, limit: Session.PAGE, status: filters.status.value, q: filters.q.value.trim() };
+      Session.replaceQuery(query);
+      try {
+        const result = await Api.get('/api/admin/conversations', { query });
+        const items = (result && result.items) || [];
+        const body = document.getElementById('rows');
+        if (!items.length) body.innerHTML = Session.stateRow(5, 'No hay resultados');
+        else body.innerHTML = items.map((item) => `
+          <tr data-href="chat.html?id=${encodeURIComponent(item.id)}&status=${encodeURIComponent(item.status || '')}" tabindex="0">
+            <td>${Fmt.text(item.publicCode)}</td>
+            <td>${Fmt.text(item.passengerName)}</td>
+            <td>${Fmt.text(item.driverName)}</td>
+            <td>${Fmt.chat(item.status)}</td>
+            <td>${Fmt.esc(Fmt.when(item.updatedAt))}</td>
+          </tr>`).join('');
+        Session.renderPager(document.getElementById('pager'), result || { page, total: 0, limit: Session.PAGE }, (next) => {
+          page = next;
+          load();
+        });
+      } catch (err) {
+        document.getElementById('rows').innerHTML = Session.stateRow(5, 'No se pudo cargar');
+        Session.fail(err);
+      }
+    }
+
+    filters.addEventListener('submit', (event) => {
+      event.preventDefault();
+      page = 1;
+      load();
+    });
+    load();
+  </script>
+</body>
+</html>

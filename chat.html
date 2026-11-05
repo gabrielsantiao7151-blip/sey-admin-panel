@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Chat · SEU</title>
+  <link rel="icon" href="assets/logo.png">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <main id="page" hidden>
+    <header class="page-head">
+      <div>
+        <p class="eyebrow"><a href="chats.html">Chats</a></p>
+        <h1>Conversación</h1>
+      </div>
+      <button class="btn danger" type="button" id="close-chat">Cerrar chat</button>
+    </header>
+    <section class="card">
+      <button class="btn ghost small" type="button" id="older" hidden>Mensajes anteriores</button>
+      <div id="thread" class="thread"><p class="state">Cargando…</p></div>
+    </section>
+  </main>
+  <script src="js/format.js"></script>
+  <script src="js/session.js"></script>
+  <script src="js/api.js"></script>
+  <script>
+    if (!Session.mount('chats')) throw new Error('sin sesión');
+    const id = Session.query().get('id');
+    const thread = document.getElementById('thread');
+    const older = document.getElementById('older');
+    const closeBtn = document.getElementById('close-chat');
+    let items = [];
+    let more = false;
+    if (Session.query().get('status') === 'closed') closeBtn.hidden = true;
+
+    function bubble(item) {
+      const role = item.senderRole === 'driver' ? 'Conductor' : 'Pasajero';
+      let body = '';
+      if (item.type === 'image' && item.imageUrl) {
+        body = `<img src="${Fmt.esc(Api.fileUrl(item.imageUrl))}" alt="Foto">`;
+      } else if (item.type === 'location') {
+        const href = `https://www.openstreetmap.org/?mlat=${encodeURIComponent(item.lat)}&mlon=${encodeURIComponent(item.lng)}`;
+        body = `<p><a href="${href}" target="_blank" rel="noopener">${Fmt.text(item.label || 'Ubicación')}</a></p>`;
+      } else {
+        body = `<p>${Fmt.text(item.body)}</p>`;
+      }
+      return `<article class="bubble ${item.senderRole === 'driver' ? 'driver' : 'passenger'}">
+        <header><span>${role}</span><time>${Fmt.esc(Fmt.when(item.createdAt))}</time></header>
+        ${body}
+      </article>`;
+    }
+
+    function paint() {
+      thread.innerHTML = items.length ? items.map(bubble).join('') : '<p class="state">No hay resultados</p>';
+      older.hidden = !more;
+    }
+
+    async function load(before) {
+      const query = { limit: 50 };
+      if (before) query.before = before;
+      const data = await Api.get(`/api/admin/conversations/${encodeURIComponent(id)}/messages`, { query });
+      const batch = data.items || [];
+      more = batch.length === 50;
+      items = before ? batch.concat(items) : batch;
+      paint();
+    }
+
+    older.addEventListener('click', () => {
+      if (!items.length) return;
+      Session.lock(older, async () => {
+        try {
+          await load(items[0].createdAt);
+        } catch (err) {
+          Session.fail(err);
+        }
+      });
+    });
+    closeBtn.addEventListener('click', () => {
+      Session.lock(closeBtn, async () => {
+        try {
+          await Api.post(`/api/admin/conversations/${encodeURIComponent(id)}/close`, {});
+          closeBtn.hidden = true;
+          Session.toast('Chat cerrado', 'ok');
+        } catch (err) {
+          Session.fail(err);
+        }
+      });
+    });
+
+    if (!id) thread.innerHTML = '<p class="state">No se encontró el registro</p>';
+    else load().catch((err) => {
+      Session.fail(err);
+      thread.innerHTML = `<p class="state">${Fmt.esc(Fmt.explain(err))}</p>`;
+    });
+  </script>
+</body>
+</html>

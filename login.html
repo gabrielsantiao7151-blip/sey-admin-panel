@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Entrar · SEU</title>
+  <link rel="icon" href="assets/logo.png">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body class="login-body">
+  <main class="login-card">
+    <div class="login-logo"><img src="assets/logo.png" alt="SEU"></div>
+    <p class="eyebrow">Panel administrativo</p>
+    <h1>SEU</h1>
+    <p class="tagline">Siempre estarás ubicado</p>
+    <div id="toasts" class="toasts"></div>
+    <form id="login">
+      <label class="field">Correo
+        <input name="email" type="email" autocomplete="username" required placeholder="admin@ubitt.app">
+      </label>
+      <label class="field">Contraseña
+        <input name="password" type="password" autocomplete="current-password" required minlength="8">
+      </label>
+      <button class="btn" type="submit">Entrar</button>
+      <label class="field">Servidor de la API
+        <input name="base" type="url" spellcheck="false" required>
+      </label>
+      <p class="hint">Si abres este archivo directo desde el disco, el navegador puede bloquear la API. Sírvelo con un servidor estático.</p>
+    </form>
+  </main>
+  <script src="js/format.js"></script>
+  <script src="js/session.js"></script>
+  <script src="js/api.js"></script>
+  <script>
+    const form = document.getElementById('login');
+    form.base.value = Api.base();
+    if (Session.token()) location.replace('index.html');
+
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const button = form.querySelector('button');
+      Session.lock(button, async () => {
+        Api.setBase(form.base.value);
+        try {
+          const value = await Api.post('/api/admin/auth/login', {
+            email: form.email.value.trim(),
+            password: form.password.value,
+          }, { auth: false });
+          if (!value.user || value.user.role !== 'superadmin') {
+            Session.clear();
+            Session.toast('Esta cuenta no es de superadmin');
+            return;
+          }
+          form.password.value = '';
+          Session.save(value);
+          location.replace('index.html');
+        } catch (err) {
+          Session.fail(err);
+        }
+      });
+    });
+  </script>
+</body>
+</html>

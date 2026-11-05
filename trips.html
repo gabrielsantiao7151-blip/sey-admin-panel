@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Viajes y mapa · SEU</title>
+  <link rel="icon" href="assets/logo.png">
+  <link rel="stylesheet" href="css/app.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+</head>
+<body>
+  <main id="page" hidden>
+    <header class="page-head">
+      <div>
+        <p class="eyebrow">Operación</p>
+        <h1>Viajes y mapa</h1>
+      </div>
+    </header>
+    <form id="filters" class="filters">
+      <label class="field tight">Desde <input name="from" type="date"></label>
+      <label class="field tight">Hasta <input name="to" type="date"></label>
+      <label class="field">Estado <select name="status"></select></label>
+      <label class="field">Categoría <select name="category"></select></label>
+      <label class="field grow">Buscar <input name="q" placeholder="Código, ciudad o dirección"></label>
+      <label class="field">Id conductor <input name="driverId" placeholder="Id del conductor"></label>
+      <label class="field">Id cliente <input name="passengerId" placeholder="Id de usuario"></label>
+      <label class="field">Id vehículo <input name="vehicleId"></label>
+      <button class="btn" type="submit">Filtrar</button>
+    </form>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Código</th><th>Fecha</th><th>Cliente</th><th>Conductor</th>
+            <th>Categoría</th><th>Estado</th><th>Valor</th><th>Pago</th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+    <nav id="pager" class="pager"></nav>
+    <section class="card">
+      <div class="section-title">
+        <h2>Conductores en línea</h2>
+      </div>
+      <div class="map-layout">
+        <div class="map-wrap">
+          <div id="map"></div>
+          <p id="map-empty" class="map-note" hidden>No hay conductores en línea</p>
+        </div>
+        <aside id="map-card" class="panel map-card">
+          <h2>Mapa</h2>
+          <p class="hint">Verde disponible, azul en camino o asignado, naranja en viaje. Se actualiza cada 5 segundos.</p>
+        </aside>
+      </div>
+    </section>
+  </main>
+  <script src="js/format.js"></script>
+  <script src="js/session.js"></script>
+  <script src="js/api.js"></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    if (!Session.mount('trips')) throw new Error('sin sesión');
+    const filters = document.getElementById('filters');
+    filters.status.innerHTML = Fmt.selectOptions(Fmt.TRIP, '', 'Todos');
+    filters.category.innerHTML = Fmt.selectOptions(Fmt.CATEGORY, '', 'Todas');
+    const initial = Session.query();
+    ['from', 'to', 'status', 'category', 'q', 'driverId', 'passengerId', 'vehicleId'].forEach((key) => {
+      if (initial.get(key)) filters.elements[key].value = initial.get(key);
+    });
+    let page = Number(initial.get('page')) || 1;
+
+    function person(value) {
+      return value && value.fullName ? Fmt.esc(value.fullName) : '—';
+    }
+
+    async function loadTrips() {
+      document.getElementById('rows').innerHTML = Session.stateRow(8, 'Cargando…');
+      const query = {
+        from: filters.from.value,
+        to: filters.to.value ? (filters.to.value.length === 10 ? `${filters.to.value}T23:59:59.999Z` : filters.to.value) : '',
+        status: filters.status.value,
+        category: filters.category.value,
+        q: filters.q.value.trim(),
+        driverId: filters.driverId.value.trim(),
+        passengerId: filters.passengerId.value.trim(),
+        vehicleId: filters.vehicleId.value.trim(),
+        page,
+        limit: Session.PAGE,
+      };
+      Session.replaceQuery({
+        from: filters.from.value,
+        to: filters.to.value,
+        status: query.status,
+        category: query.category,
+        q: query.q,
+        driverId: query.driverId,
+        passengerId: query.passengerId,
+        vehicleId: query.vehicleId,
+        page,
+      });
+      try {
+        const result = await Api.get('/api/admin/trips', { query });
+        const items = (result && result.items) || [];
+        const body = document.getElementById('rows');
+        if (!items.length) body.innerHTML = Session.stateRow(8, 'No hay resultados');
+        else {
+          body.innerHTML = items.map((item) => {
+            const fare = item.fare || {};
+            return `
+              <tr data-href="trip.html?id=${encodeURIComponent(item.id)}" tabindex="0">
+                <td>${Fmt.text(item.publicCode)}</td>
+                <td>${Fmt.esc(Fmt.when(item.createdAt))}</td>
+                <td>${person(item.passenger)}</td>
+                <td>${person(item.driver)}</td>
+                <td>${Fmt.esc(Fmt.category(item.vehicleCategory))}</td>
+                <td>${Fmt.trip(item.status)}</td>
+                <td>${fare.agreed == null ? '—' : Fmt.esc(Fmt.money(fare.agreed, fare.currency))}</td>
+                <td>${Fmt.esc(Fmt.payMethod(item.payment && item.payment.method))}</td>
+              </tr>`;
+          }).join('');
+        }
+        Session.renderPager(document.getElementById('pager'), result || { page, total: 0, limit: Session.PAGE }, (next) => {
+          page = next;
+          loadTrips();
+        });
+      } catch (err) {
+        document.getElementById('rows').innerHTML = Session.stateRow(8, 'No se pudo cargar');
+        Session.fail(err);
+      }
+    }
+
+    filters.addEventListener('submit', (event) => {
+      event.preventDefault();
+      if (filters.from.value && filters.to.value && filters.from.value > filters.to.value) {
+        Session.toast('El rango de fechas está invertido');
+        return;
+      }
+      page = 1;
+      loadTrips();
+    });
+
+    const COLORS = { available: '#1f7a4d', assigned: '#1d4e89', arriving: '#1d4e89', in_trip: '#c46a1a' };
+    const card = document.getElementById('map-card');
+    const empty = document.getElementById('map-empty');
+    let map;
+    let layer;
+    let fitted = false;
+    let selectedId = '';
+    let announced = false;
+
+    function pin(color) {
+      return L.divIcon({
+        className: 'pin-icon',
+        html: `<span class="pin" style="background:${color}"></span>`,
+        iconSize: [28, 28],
+        iconAnchor: [14, 14],
+      });
+    }
+
+    function showDriver(driver) {
+      selectedId = driver.driverId;
+      const trip = driver.trip;
+      card.innerHTML = `
+        <h2>${Fmt.text(driver.fullName)}</h2>
+        <p>${Fmt.text(driver.plate)} · ${Fmt.mapState(driver.state)}</p>
+        ${trip ? `
+          <p><strong>Origen.</strong> ${Fmt.text(trip.origin && trip.origin.address)}</p>
+          <p><strong>Destino.</strong> ${Fmt.text(trip.destination && trip.destination.address)}</p>
+          <p><a href="trip.html?id=${encodeURIComponent(trip.id)}">${Fmt.text(trip.publicCode)}</a></p>
+        ` : '<p class="hint">Sin viaje activo.</p>'}
+      `;
+    }
+
+    function draw(drivers) {
+      layer.clearLayers();
+      empty.hidden = drivers.length > 0;
+      if (!drivers.length) {
+        if (!fitted) {
+          map.setView([4.71, -74.07], 12);
+          fitted = true;
+        }
+        if (selectedId) {
+          selectedId = '';
+          card.innerHTML = '<h2>Mapa</h2><p class="hint">No hay conductores en línea.</p>';
+        }
+        return;
+      }
+      const bounds = [];
+      drivers.forEach((driver) => {
+        const lat = driver.location && driver.location.lat;
+        const lng = driver.location && driver.location.lng;
+        if (lat == null || lng == null) return;
+        const marker = L.marker([lat, lng], { icon: pin(COLORS[driver.state] || '#143d2e') });
+        marker.addTo(layer);
+        marker.on('click', () => showDriver(driver));
+        bounds.push([lat, lng]);
+        if (driver.driverId === selectedId) showDriver(driver);
+      });
+      if (!fitted && bounds.length) {
+        if (bounds.length === 1) map.setView(bounds[0], 14);
+        else map.fitBounds(bounds, { padding: [32, 32] });
+        fitted = true;
+      }
+    }
+
+    async function pullMap() {
+      if (document.hidden) return;
+      try {
+        const data = await Api.get('/api/admin/map');
+        draw((data && data.drivers) || []);
+        announced = false;
+      } catch (err) {
+        if (!announced) Session.fail(err);
+        announced = true;
+      }
+    }
+
+    function bootMap() {
+      if (!window.L) {
+        document.getElementById('map').innerHTML = '<p class="state">No se pudo cargar el mapa.</p>';
+        return;
+      }
+      map = L.map('map').setView([4.71, -74.07], 12);
+      L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '&copy; OpenStreetMap',
+      }).addTo(map);
+      layer = L.layerGroup().addTo(map);
+      pullMap();
+      setInterval(pullMap, 5000);
+      document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) pullMap();
+      });
+    }
+
+    loadTrips();
+    bootMap();
+  </script>
+</body>
+</html>

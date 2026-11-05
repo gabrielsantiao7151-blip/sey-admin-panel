@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Conductores · SEU</title>
+  <link rel="icon" href="assets/logo.png">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <main id="page" hidden>
+    <header class="page-head">
+      <div>
+        <p class="eyebrow">Flota</p>
+        <h1>Conductores</h1>
+      </div>
+      <button type="button" class="btn" id="toggle-create">Nuevo conductor</button>
+    </header>
+    <form id="create" class="card stack-form" hidden>
+      <h2>Nuevo conductor</h2>
+      <div class="filters">
+        <label class="field">Nombre <input name="fullName" required></label>
+        <label class="field">Documento <input name="document" required></label>
+        <label class="field">Teléfono <input name="phone" type="tel" required></label>
+        <label class="field">Correo <input name="email" type="email" required></label>
+        <label class="field">Contraseña <input name="password" type="password" minlength="8" autocomplete="new-password" required></label>
+        <label class="field tight">País <input name="countryCode" maxlength="2" required value="CO"></label>
+        <label class="field">Ciudad <input name="city" required value="Bogotá"></label>
+      </div>
+      <p class="hint">Queda aprobado y activo. La contraseña no se vuelve a mostrar.</p>
+      <button class="btn" type="submit">Crear conductor</button>
+    </form>
+    <form id="filters" class="filters">
+      <label class="field">Estado
+        <select name="status"></select>
+      </label>
+      <label class="field grow">Buscar
+        <input name="q" placeholder="Nombre, correo, teléfono o documento">
+      </label>
+      <button class="btn" type="submit">Filtrar</button>
+    </form>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Nombre</th><th>Teléfono</th><th>Ciudad</th><th>Estado</th>
+            <th>Operativo</th><th>Calificación</th><th>Deuda en efectivo</th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+    <nav id="pager" class="pager"></nav>
+  </main>
+  <script src="js/format.js"></script>
+  <script src="js/session.js"></script>
+  <script src="js/api.js"></script>
+  <script>
+    if (!Session.mount('drivers')) throw new Error('sin sesión');
+    const filters = document.getElementById('filters');
+    const create = document.getElementById('create');
+    filters.status.innerHTML = Fmt.selectOptions(Fmt.DRIVER, '', 'Todos');
+    const initial = Session.query();
+    if (initial.get('status')) filters.status.value = initial.get('status');
+    if (initial.get('q')) filters.q.value = initial.get('q');
+    let page = Number(initial.get('page')) || 1;
+
+    document.getElementById('toggle-create').addEventListener('click', () => {
+      create.hidden = !create.hidden;
+      if (!create.hidden) create.fullName.focus();
+    });
+
+    function paint(result) {
+      const items = (result && result.items) || [];
+      const body = document.getElementById('rows');
+      if (!items.length) {
+        body.innerHTML = Session.stateRow(7, 'No hay resultados');
+      } else {
+        body.innerHTML = items.map((item) => `
+          <tr data-href="driver.html?id=${encodeURIComponent(item.id)}" tabindex="0">
+            <td>${Fmt.text(item.fullName)}</td>
+            <td>${Fmt.text(item.phone)}</td>
+            <td>${Fmt.text(item.city)}</td>
+            <td>${Fmt.driver(item.status)}</td>
+            <td>${Fmt.operational(item.operational)}</td>
+            <td>${Fmt.esc(Fmt.rating(item.ratingAvg, item.ratingCount))}</td>
+            <td>${Fmt.esc(Fmt.money(item.cashCommissionOwed, Fmt.currencyFor(item.countryCode)))}</td>
+          </tr>
+        `).join('');
+      }
+      Session.renderPager(document.getElementById('pager'), result || { page, total: 0, limit: Session.PAGE }, (next) => {
+        page = next;
+        load();
+      });
+    }
+
+    async function load() {
+      document.getElementById('rows').innerHTML = Session.stateRow(7, 'Cargando…');
+      const query = { status: filters.status.value, q: filters.q.value.trim(), page, limit: Session.PAGE };
+      Session.replaceQuery(query);
+      try {
+        paint(await Api.get('/api/admin/drivers', { query }));
+      } catch (err) {
+        document.getElementById('rows').innerHTML = Session.stateRow(7, 'No se pudo cargar');
+        Session.fail(err);
+      }
+    }
+
+    filters.addEventListener('submit', (event) => {
+      event.preventDefault();
+      page = 1;
+      load();
+    });
+
+    create.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const button = create.querySelector('button');
+      Session.lock(button, async () => {
+        try {
+          await Api.post('/api/admin/drivers', {
+            fullName: create.fullName.value.trim(),
+            document: create.document.value.trim(),
+            phone: create.phone.value.trim(),
+            email: create.email.value.trim(),
+            password: create.password.value,
+            countryCode: create.countryCode.value.trim().toUpperCase(),
+            city: create.city.value.trim(),
+          });
+          create.password.value = '';
+          create.reset();
+          create.countryCode.value = 'CO';
+          create.city.value = 'Bogotá';
+          create.hidden = true;
+          Session.toast('Conductor creado', 'ok');
+          page = 1;
+          load();
+        } catch (err) {
+          Session.fail(err);
+        }
+      });
+    });
+
+    load();
+  </script>
+</body>
+</html>

@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Tarifas · SEU</title>
+  <link rel="icon" href="assets/logo.png">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <main id="page" hidden>
+    <header class="page-head">
+      <div>
+        <p class="eyebrow">Precios</p>
+        <h1>Tarifas</h1>
+      </div>
+      <button type="button" class="btn ghost" id="fresh">Nueva tarifa</button>
+    </header>
+    <p class="hint">La ciudad vacía es la tarifa nacional. Si existe una de esa ciudad y categoría, gana sobre la nacional. El servidor lo resuelve al cotizar.</p>
+    <form id="fare" class="card stack-form">
+      <h2 id="form-title">Nueva tarifa</h2>
+      <input type="hidden" name="fareId">
+      <div class="filters">
+        <label class="field tight">País <input name="countryCode" maxlength="2" required value="CO"></label>
+        <label class="field">Ciudad <input name="city" placeholder="Vacío = nacional"></label>
+        <label class="field">Categoría <select name="vehicleCategory"></select></label>
+        <label class="field tight">Moneda <input name="currency" maxlength="3" required value="COP"></label>
+        <label class="field tight">Banderazo <input name="baseFare" type="number" min="0" step="1" required></label>
+        <label class="field tight">Por km <input name="perKm" type="number" min="0" step="1" required></label>
+        <label class="field tight">Por minuto <input name="waitMinuteRate" type="number" min="0" step="1" required></label>
+        <label class="field tight">Noche % <input name="nightSurchargePct" type="number" min="0" step="1" required value="0"></label>
+        <label class="field tight">Lluvia % <input name="rainSurchargePct" type="number" min="0" step="1" required value="0"></label>
+        <label class="field tight">Aeropuerto <input name="airportSurcharge" type="number" min="0" step="1" required value="0"></label>
+        <label class="field tight">Comisión % <input name="commissionPct" type="number" min="0" max="100" step="1" required value="10"></label>
+        <label class="field tight">Oferta mín. % <input name="minOfferPct" type="number" min="0" step="1" required value="80"></label>
+        <label class="field tight">Oferta máx. % <input name="maxOfferPct" type="number" min="0" step="1" required value="150"></label>
+        <label class="check"><input name="isActive" type="checkbox" checked> <span>Activa</span></label>
+      </div>
+      <button class="btn" type="submit">Guardar tarifa</button>
+    </form>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>País</th><th>Ciudad</th><th>Categoría</th><th>Moneda</th>
+            <th>Banderazo</th><th>Km</th><th>Min</th><th>Comisión</th><th>Oferta</th><th>Estado</th><th></th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </main>
+  <script src="js/format.js"></script>
+  <script src="js/session.js"></script>
+  <script src="js/api.js"></script>
+  <script>
+    if (!Session.mount('fares')) throw new Error('sin sesión');
+    const form = document.getElementById('fare');
+    form.vehicleCategory.innerHTML = Fmt.selectOptions(Fmt.CATEGORY, 'standard');
+    let fares = [];
+
+    function fill(fare) {
+      document.getElementById('form-title').textContent = fare ? 'Editar tarifa' : 'Nueva tarifa';
+      form.fareId.value = fare ? fare.id : '';
+      form.countryCode.value = fare ? fare.countryCode : 'CO';
+      form.city.value = fare && fare.city ? fare.city : '';
+      form.vehicleCategory.value = fare ? fare.vehicleCategory : 'standard';
+      form.currency.value = fare ? fare.currency : 'COP';
+      form.baseFare.value = fare ? fare.baseFare : '';
+      form.perKm.value = fare ? fare.perKm : '';
+      form.waitMinuteRate.value = fare ? fare.waitMinuteRate : '';
+      form.nightSurchargePct.value = fare ? fare.nightSurchargePct : 0;
+      form.rainSurchargePct.value = fare ? fare.rainSurchargePct : 0;
+      form.airportSurcharge.value = fare ? fare.airportSurcharge : 0;
+      form.commissionPct.value = fare ? fare.commissionPct : 10;
+      form.minOfferPct.value = fare ? fare.minOfferPct : 80;
+      form.maxOfferPct.value = fare ? fare.maxOfferPct : 150;
+      form.isActive.checked = fare ? fare.isActive !== false : true;
+    }
+
+    function payload() {
+      return {
+        countryCode: form.countryCode.value.trim().toUpperCase(),
+        city: form.city.value.trim(),
+        vehicleCategory: form.vehicleCategory.value,
+        currency: form.currency.value.trim().toUpperCase(),
+        baseFare: Number(form.baseFare.value),
+        perKm: Number(form.perKm.value),
+        waitMinuteRate: Number(form.waitMinuteRate.value),
+        nightSurchargePct: Number(form.nightSurchargePct.value),
+        rainSurchargePct: Number(form.rainSurchargePct.value),
+        airportSurcharge: Number(form.airportSurcharge.value),
+        commissionPct: Number(form.commissionPct.value),
+        minOfferPct: Number(form.minOfferPct.value),
+        maxOfferPct: Number(form.maxOfferPct.value),
+        isActive: form.isActive.checked,
+      };
+    }
+
+    function paint() {
+      const body = document.getElementById('rows');
+      if (!fares.length) {
+        body.innerHTML = Session.stateRow(11, 'No hay resultados');
+        return;
+      }
+      body.innerHTML = fares.map((fare) => `
+        <tr data-id="${Fmt.esc(fare.id)}" tabindex="0">
+          <td>${Fmt.text(fare.countryCode)}</td>
+          <td>${fare.city ? Fmt.esc(fare.city) : 'Nacional'}</td>
+          <td>${Fmt.esc(Fmt.category(fare.vehicleCategory))}</td>
+          <td>${Fmt.text(fare.currency)}</td>
+          <td>${Fmt.esc(Fmt.money(fare.baseFare, fare.currency))}</td>
+          <td>${Fmt.esc(Fmt.money(fare.perKm, fare.currency))}</td>
+          <td>${Fmt.esc(Fmt.money(fare.waitMinuteRate, fare.currency))}</td>
+          <td>${Fmt.esc(fare.commissionPct)}%</td>
+          <td>${Fmt.esc(fare.minOfferPct)}–${Fmt.esc(fare.maxOfferPct)}%</td>
+          <td>${fare.isActive ? '<span class="badge ok">Activa</span>' : '<span class="badge muted">Inactiva</span>'}</td>
+          <td><button type="button" class="btn ghost small" data-toggle="${Fmt.esc(fare.id)}">${fare.isActive ? 'Apagar' : 'Prender'}</button></td>
+        </tr>
+      `).join('');
+      body.querySelectorAll('tr[data-id]').forEach((row) => {
+        row.addEventListener('click', (event) => {
+          if (event.target.closest('button')) return;
+          const fare = fares.find((item) => item.id === row.dataset.id);
+          if (fare) fill(fare);
+        });
+      });
+      body.querySelectorAll('[data-toggle]').forEach((button) => {
+        button.addEventListener('click', () => {
+          const fare = fares.find((item) => item.id === button.dataset.toggle);
+          if (!fare) return;
+          Session.lock(button, async () => {
+            try {
+              await Api.patch(`/api/admin/fares/${fare.id}/active`, { isActive: !fare.isActive });
+              Session.toast(fare.isActive ? 'Tarifa apagada' : 'Tarifa prendida', 'ok');
+              load();
+            } catch (err) {
+              Session.fail(err);
+            }
+          });
+        });
+      });
+    }
+
+    async function load() {
+      document.getElementById('rows').innerHTML = Session.stateRow(11, 'Cargando…');
+      try {
+        const value = await Api.get('/api/admin/fares');
+        fares = Array.isArray(value) ? value : (value.items || []);
+        paint();
+        if (form.fareId.value) {
+          const open = fares.find((item) => item.id === form.fareId.value);
+          if (open) fill(open);
+        }
+      } catch (err) {
+        document.getElementById('rows').innerHTML = Session.stateRow(11, 'No se pudo cargar');
+        Session.fail(err);
+      }
+    }
+
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const body = payload();
+      if (body.minOfferPct > body.maxOfferPct) {
+        Session.toast('La oferta mínima no puede ser mayor que la máxima');
+        return;
+      }
+      const button = form.querySelector('button[type="submit"]');
+      Session.lock(button, async () => {
+        try {
+          const saved = form.fareId.value
+            ? await Api.put(`/api/admin/fares/${form.fareId.value}`, body)
+            : await Api.post('/api/admin/fares', body);
+          Session.toast('Tarifa guardada', 'ok');
+          fill(saved);
+          load();
+        } catch (err) {
+          Session.fail(err);
+        }
+      });
+    });
+
+    document.getElementById('fresh').addEventListener('click', () => fill(null));
+    load();
+  </script>
+</body>
+</html>

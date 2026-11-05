@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Alertas · SEU</title>
+  <link rel="icon" href="assets/logo.png">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <main id="page" hidden>
+    <header class="page-head">
+      <div>
+        <p class="eyebrow">Operación</p>
+        <h1>Alertas</h1>
+      </div>
+    </header>
+    <form id="filters" class="filters">
+      <label class="field">Estado
+        <select name="status">
+          <option value="open">Abiertas</option>
+          <option value="resolved">Resueltas</option>
+          <option value="">Todas</option>
+        </select>
+      </label>
+      <label class="field">Tipo <select name="type"></select></label>
+      <button class="btn" type="submit">Filtrar</button>
+    </form>
+    <form id="resolve" class="card stack-form" hidden>
+      <h2>Resolver alerta</h2>
+      <input type="hidden" name="id">
+      <label class="field">Nota <textarea name="note" placeholder="Ya hablé con el conductor"></textarea></label>
+      <p class="hint">Un SOS resuelto solo cierra la alerta. No llama a la policía.</p>
+      <div class="actions">
+        <button class="btn" type="submit">Resolver</button>
+        <button class="btn ghost" type="button" id="cancel-resolve">Cancelar</button>
+      </div>
+    </form>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Tipo</th><th>Mensaje</th><th>Fecha</th><th>Nota</th><th>Enlaces</th><th></th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+    <nav id="pager" class="pager"></nav>
+  </main>
+  <script src="js/format.js"></script>
+  <script src="js/session.js"></script>
+  <script src="js/api.js"></script>
+  <script>
+    if (!Session.mount('alerts')) throw new Error('sin sesión');
+    const filters = document.getElementById('filters');
+    const resolveForm = document.getElementById('resolve');
+    filters.type.innerHTML = Fmt.selectOptions(Fmt.ALERT, '', 'Todos');
+    let page = 1;
+
+    function links(item) {
+      const parts = [];
+      if (item.tripId) parts.push(`<a href="trip.html?id=${encodeURIComponent(item.tripId)}">Viaje</a>`);
+      if (item.driverId) parts.push(`<a href="driver.html?id=${encodeURIComponent(item.driverId)}">Conductor</a>`);
+      if (item.vehicleId) parts.push('<a href="vehicles.html">Vehículo</a>');
+      if (item.lat != null && item.lng != null) {
+        parts.push(`<a href="https://www.openstreetmap.org/?mlat=${encodeURIComponent(item.lat)}&mlon=${encodeURIComponent(item.lng)}" target="_blank" rel="noopener">Mapa</a>`);
+      }
+      return parts.join(' · ') || '—';
+    }
+
+    async function load() {
+      document.getElementById('rows').innerHTML = Session.stateRow(6, 'Cargando…');
+      try {
+        const result = await Api.get('/api/admin/alerts', {
+          query: { page, limit: Session.PAGE, status: filters.status.value, type: filters.type.value },
+        });
+        const items = (result && result.items) || [];
+        const body = document.getElementById('rows');
+        if (!items.length) body.innerHTML = Session.stateRow(6, 'No hay resultados');
+        else body.innerHTML = items.map((item) => `
+          <tr>
+            <td>${Fmt.esc(Fmt.alert(item.type))}</td>
+            <td>${Fmt.text(item.message)}</td>
+            <td>${Fmt.esc(Fmt.when(item.createdAt))}</td>
+            <td>${Fmt.text(item.note || item.resolutionNote)}</td>
+            <td class="links">${links(item)}</td>
+            <td>${item.status === 'open'
+              ? `<button class="btn small" type="button" data-id="${Fmt.esc(item.id)}">Resolver</button>`
+              : '<span class="badge ok">Resuelta</span>'}</td>
+          </tr>`).join('');
+        Session.renderPager(document.getElementById('pager'), result || { page, total: 0, limit: Session.PAGE }, (next) => {
+          page = next;
+          load();
+        });
+      } catch (err) {
+        document.getElementById('rows').innerHTML = Session.stateRow(6, 'No se pudo cargar');
+        Session.fail(err);
+      }
+    }
+
+    document.getElementById('rows').addEventListener('click', (event) => {
+      const button = event.target.closest('[data-id]');
+      if (!button) return;
+      resolveForm.id.value = button.dataset.id;
+      resolveForm.note.value = '';
+      resolveForm.hidden = false;
+      resolveForm.note.focus();
+    });
+    document.getElementById('cancel-resolve').addEventListener('click', () => {
+      resolveForm.hidden = true;
+    });
+    filters.addEventListener('submit', (event) => {
+      event.preventDefault();
+      page = 1;
+      load();
+    });
+    resolveForm.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const button = resolveForm.querySelector('[type="submit"]');
+      Session.lock(button, async () => {
+        try {
+          await Api.post(`/api/admin/alerts/${resolveForm.id.value}/resolve`, { note: resolveForm.note.value.trim() });
+          resolveForm.hidden = true;
+          Session.toast('Alerta resuelta', 'ok');
+          await load();
+        } catch (err) {
+          Session.fail(err);
+        }
+      });
+    });
+    load();
+  </script>
+</body>
+</html>

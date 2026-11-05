@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Facturación · SEU</title>
+  <link rel="icon" href="assets/logo.png">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <main id="page" hidden>
+    <header class="page-head">
+      <div>
+        <p class="eyebrow">Cifras</p>
+        <h1>Facturación</h1>
+      </div>
+    </header>
+    <form id="range" class="filters">
+      <label class="field tight">Desde <input name="from" type="date" required></label>
+      <label class="field tight">Hasta <input name="to" type="date" required></label>
+      <button class="btn" type="submit">Actualizar</button>
+    </form>
+
+    <section class="card">
+      <div class="section-title"><h2>Facturación</h2></div>
+      <p class="hint">Efectivo y pago en línea van en filas distintas. No se emite factura ni se paga al conductor.</p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Método</th><th>Moneda</th><th>Viajes</th><th>Bruto</th><th>Comisión</th><th>Neto conductor</th></tr>
+          </thead>
+          <tbody id="billing-rows"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="section-title"><h2>Operación</h2></div>
+      <p id="ops-summary" class="hint"></p>
+      <h3>Por día</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Fecha</th><th>Cantidad</th><th>Finalizados</th><th>Cancelados</th></tr></thead>
+          <tbody id="by-day"></tbody>
+        </table>
+      </div>
+      <h3>Por conductor</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Conductor</th><th>Finalizados</th></tr></thead>
+          <tbody id="by-driver"></tbody>
+        </table>
+      </div>
+      <h3>Por vehículo</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Placa</th><th>Finalizados</th></tr></thead>
+          <tbody id="by-vehicle"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="section-title"><h2>Conductores</h2></div>
+      <div id="by-status" class="cards"></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Nombre</th><th>Estado</th><th>Viajes del periodo</th><th>Calificación</th></tr></thead>
+          <tbody id="driver-rows"></tbody>
+        </table>
+      </div>
+      <nav id="driver-pager" class="pager"></nav>
+    </section>
+
+    <section class="card">
+      <div class="section-title"><h2>Pagos</h2></div>
+      <p id="pay-summary" class="hint"></p>
+      <form id="pay-filters" class="filters">
+        <label class="field">Estado <select name="status"></select></label>
+        <label class="field">Método <select name="method"></select></label>
+        <button class="btn" type="submit">Filtrar</button>
+      </form>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Viaje</th><th>Fecha</th><th>Método</th><th>Estado</th><th>Monto</th><th>Proveedor</th></tr></thead>
+          <tbody id="pay-rows"></tbody>
+        </table>
+      </div>
+      <nav id="pay-pager" class="pager"></nav>
+    </section>
+
+    <section class="card">
+      <div class="section-title"><h2>Pasarela</h2></div>
+      <p class="hint">Hoy ningún proveedor cobra de verdad. Si queda lista, la app muestra “Pago en línea”, pero el cobro responde que falta el adaptador. Déjala apagada hasta elegir el proveedor.</p>
+      <form id="gateway" class="stack-form">
+        <p id="gateway-state" class="hint"></p>
+        <div class="filters">
+          <label class="field">Proveedor <input name="provider" placeholder="Vacío = sin proveedor"></label>
+          <label class="field">Llave pública <input name="publicKey" autocomplete="off"></label>
+          <label class="field">Llave secreta <input name="secretKey" type="password" autocomplete="new-password" placeholder="Vacío no borra la anterior"></label>
+          <label class="field">Secreto del webhook <input name="webhookSecret" type="password" autocomplete="new-password" placeholder="Vacío no borra el anterior"></label>
+          <label class="check"><input name="enabled" type="checkbox"> <span>Encendida</span></label>
+        </div>
+        <p id="webhook" class="hint"></p>
+        <div class="actions">
+          <button class="btn" type="submit">Guardar pasarela</button>
+          <button class="btn ghost" type="button" id="clear-secrets">Borrar secretos</button>
+        </div>
+      </form>
+    </section>
+  </main>
+  <script src="js/format.js"></script>
+  <script src="js/session.js"></script>
+  <script src="js/api.js"></script>
+  <script>
+    if (!Session.mount('billing')) throw new Error('sin sesión');
+    const range = document.getElementById('range');
+    const payFilters = document.getElementById('pay-filters');
+    const today = Fmt.todayUtc();
+    range.from.value = today;
+    range.to.value = today;
+    payFilters.status.innerHTML = Fmt.selectOptions(Fmt.PAYMENT_STATUS, '', 'Todos');
+    payFilters.method.innerHTML = Fmt.selectOptions(Fmt.PAYMENT_METHOD, '', 'Todos');
+    let driverPage = 1;
+    let payPage = 1;
+
+    function blank(body, cols) {
+      body.innerHTML = Session.stateRow(cols, 'No hay resultados');
+    }
+
+    async function loadBilling() {
+      const body = document.getElementById('billing-rows');
+      body.innerHTML = Session.stateRow(6, 'Cargando…');
+      const data = await Api.get('/api/admin/billing', { query: Fmt.rangeQuery(range.from.value, range.to.value) });
+      const rows = data.rows || [];
+      if (!rows.length) blank(body, 6);
+      else body.innerHTML = rows.map((row) => `
+        <tr>
+          <td>${Fmt.esc(Fmt.payMethod(row.method))}</td>
+          <td>${Fmt.text(row.currency)}</td>
+          <td>${Fmt.num(row.trips)}</td>
+          <td>${Fmt.esc(Fmt.money(row.gross, row.currency))}</td>
+          <td>${Fmt.esc(Fmt.money(row.commission, row.currency))}</td>
+          <td>${Fmt.esc(Fmt.money(row.driverNet, row.currency))}</td>
+        </tr>`).join('');
+    }
+
+    async function loadOps() {
+      const data = await Api.get('/api/admin/reports/operations', { query: Fmt.rangeQuery(range.from.value, range.to.value) });
+      document.getElementById('ops-summary').textContent =
+        `Cancelaciones: ${Fmt.num(data.cancellations)}. Duración promedio: ${Fmt.minutes(data.avgDurationMin)}.`;
+      const byDay = document.getElementById('by-day');
+      const days = data.tripsByDay || [];
+      if (!days.length) blank(byDay, 4);
+      else byDay.innerHTML = days.map((row) =>
+        `<tr><td>${Fmt.esc(Fmt.dayKey(row.date))}</td><td>${Fmt.num(row.count)}</td><td>${Fmt.num(row.completed)}</td><td>${Fmt.num(row.cancelled)}</td></tr>`).join('');
+      const byDriver = document.getElementById('by-driver');
+      const drivers = data.tripsByDriver || [];
+      if (!drivers.length) blank(byDriver, 2);
+      else byDriver.innerHTML = drivers.map((row) => `<tr><td>${Fmt.text(row.fullName)}</td><td>${Fmt.num(row.count)}</td></tr>`).join('');
+      const byVehicle = document.getElementById('by-vehicle');
+      const vehicles = data.tripsByVehicle || [];
+      if (!vehicles.length) blank(byVehicle, 2);
+      else byVehicle.innerHTML = vehicles.map((row) => `<tr><td>${Fmt.text(row.plate)}</td><td>${Fmt.num(row.count)}</td></tr>`).join('');
+    }
+
+    async function loadDrivers() {
+      const body = document.getElementById('driver-rows');
+      body.innerHTML = Session.stateRow(4, 'Cargando…');
+      const data = await Api.get('/api/admin/reports/drivers', {
+        query: Object.assign({ page: driverPage, limit: Session.PAGE }, Fmt.rangeQuery(range.from.value, range.to.value)),
+      });
+      const order = ['approved', 'pending', 'rejected', 'suspended', 'inactive'];
+      document.getElementById('by-status').innerHTML = order.map((status) =>
+        `<article class="stat"><h2>${Fmt.esc(status === 'approved' ? 'Aprobado' : status === 'pending' ? 'Pendiente' : status === 'rejected' ? 'Rechazado' : status === 'suspended' ? 'Suspendido' : 'Inactivo')}</h2><p class="num">${Fmt.num(data.byStatus && data.byStatus[status])}</p></article>`).join('');
+      const items = (data.drivers && data.drivers.items) || [];
+      if (!items.length) blank(body, 4);
+      else body.innerHTML = items.map((item) => `
+        <tr data-href="driver.html?id=${encodeURIComponent(item.id)}" tabindex="0">
+          <td>${Fmt.text(item.fullName)}</td>
+          <td>${Fmt.driver(item.status)}</td>
+          <td>${Fmt.num(item.trips)}</td>
+          <td>${Fmt.esc(Fmt.rating(item.ratingAvg, item.ratingCount))}</td>
+        </tr>`).join('');
+      Session.renderPager(document.getElementById('driver-pager'), data.drivers || { page: driverPage, total: 0, limit: Session.PAGE }, (next) => {
+        driverPage = next;
+        loadDrivers().catch(Session.fail);
+      });
+    }
+
+    async function loadPayments() {
+      const body = document.getElementById('pay-rows');
+      body.innerHTML = Session.stateRow(6, 'Cargando…');
+      const rangeQuery = Fmt.rangeQuery(range.from.value, range.to.value);
+      const [summary, data] = await Promise.all([
+        Api.get('/api/admin/payments/summary', { query: rangeQuery }),
+        Api.get('/api/admin/payments', {
+          query: Object.assign({
+            page: payPage,
+            limit: Session.PAGE,
+            status: payFilters.status.value,
+            method: payFilters.method.value,
+          }, rangeQuery),
+        }),
+      ]);
+      const lines = (summary.rows || []).map((row) =>
+        `${Fmt.payMethod(row.method)} · ${row.status} · ${Fmt.money(row.amount, row.currency)} (${Fmt.num(row.count)})`);
+      document.getElementById('pay-summary').textContent = lines.length ? lines.join('   ·   ') : '$ 0';
+      const items = data.items || [];
+      if (!items.length) blank(body, 6);
+      else body.innerHTML = items.map((item) => `
+        <tr data-href="trip.html?id=${encodeURIComponent(item.tripId)}" tabindex="0">
+          <td>${Fmt.text(item.publicCode)}</td>
+          <td>${Fmt.esc(Fmt.when(item.createdAt))}</td>
+          <td>${Fmt.esc(Fmt.payMethod(item.method))}</td>
+          <td>${Fmt.payStatus(item.status)}</td>
+          <td>${Fmt.esc(Fmt.money(item.amount, item.currency))}</td>
+          <td>${Fmt.text(item.provider)}</td>
+        </tr>`).join('');
+      Session.renderPager(document.getElementById('pay-pager'), data || { page: payPage, total: 0, limit: Session.PAGE }, (next) => {
+        payPage = next;
+        loadPayments().catch(Session.fail);
+      });
+    }
+
+    function paintGateway(data) {
+      const form = document.getElementById('gateway');
+      form.provider.value = data.provider || '';
+      form.publicKey.value = data.publicKey || '';
+      form.secretKey.value = '';
+      form.webhookSecret.value = '';
+      form.enabled.checked = Boolean(data.enabled);
+      document.getElementById('gateway-state').textContent = [
+        data.ready ? 'Lista para mostrarse en la app' : 'Apagada o incompleta',
+        data.hasSecretKey ? 'hay llave secreta' : 'sin llave secreta',
+        data.hasWebhookSecret ? 'hay secreto de webhook' : 'sin secreto de webhook',
+      ].join(' · ');
+      document.getElementById('webhook').textContent =
+        `Webhook: POST ${Api.base()}/api/payments/webhook/${data.provider || '{provider}'} con el header x-ubitt-signature.`;
+    }
+
+    async function loadAll() {
+      driverPage = 1;
+      payPage = 1;
+      await Promise.all([loadBilling(), loadOps(), loadDrivers(), loadPayments()]);
+    }
+
+    range.addEventListener('submit', (event) => {
+      event.preventDefault();
+      if (range.from.value > range.to.value) {
+        Session.toast('El rango de fechas está invertido');
+        return;
+      }
+      loadAll().catch(Session.fail);
+    });
+    payFilters.addEventListener('submit', (event) => {
+      event.preventDefault();
+      payPage = 1;
+      loadPayments().catch(Session.fail);
+    });
+    document.getElementById('gateway').addEventListener('submit', (event) => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const button = form.querySelector('[type="submit"]');
+      Session.lock(button, async () => {
+        const body = {
+          provider: form.provider.value.trim() || null,
+          enabled: form.enabled.checked,
+          publicKey: form.publicKey.value.trim(),
+        };
+        if (form.secretKey.value) body.secretKey = form.secretKey.value;
+        if (form.webhookSecret.value) body.webhookSecret = form.webhookSecret.value;
+        try {
+          paintGateway(await Api.put('/api/admin/gateway', body));
+          Session.toast('Pasarela guardada', 'ok');
+        } catch (err) {
+          Session.fail(err);
+        }
+      });
+    });
+    document.getElementById('clear-secrets').addEventListener('click', () => {
+      const button = document.getElementById('clear-secrets');
+      Session.lock(button, async () => {
+        try {
+          paintGateway(await Api.put('/api/admin/gateway', { clearSecrets: true, provider: null }));
+          Session.toast('Secretos borrados', 'ok');
+        } catch (err) {
+          Session.fail(err);
+        }
+      });
+    });
+
+    Promise.all([loadAll(), Api.get('/api/admin/gateway').then(paintGateway)]).catch(Session.fail);
+  </script>
+</body>
+</html>

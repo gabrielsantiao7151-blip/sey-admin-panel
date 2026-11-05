@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Inicio · SEU</title>
+  <link rel="icon" href="assets/logo.png">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <main id="page" hidden>
+    <header class="page-head">
+      <div>
+        <p class="eyebrow">Hoy</p>
+        <h1>Inicio</h1>
+      </div>
+    </header>
+    <form id="range" class="filters">
+      <label class="field tight">Desde <input name="from" type="date" required></label>
+      <label class="field tight">Hasta <input name="to" type="date" required></label>
+      <button class="btn" type="submit">Actualizar</button>
+    </form>
+    <p id="period" class="hint"></p>
+    <div id="cards" class="cards"><p class="state">Cargando…</p></div>
+  </main>
+  <script src="js/format.js"></script>
+  <script src="js/session.js"></script>
+  <script src="js/api.js"></script>
+  <script>
+    if (!Session.mount('index')) throw new Error('sin sesión');
+    const form = document.getElementById('range');
+    const params = Session.query();
+    form.from.value = params.get('from') || Fmt.todayUtc();
+    form.to.value = params.get('to') || Fmt.todayUtc();
+
+    function card(title, number, lines, href) {
+      const body = `<h2>${title}</h2><p class="num">${Fmt.num(number)}</p>`
+        + (lines ? `<ul>${lines.map((line) => `<li>${line}</li>`).join('')}</ul>` : '');
+      if (href) return `<a class="stat alert" href="${href}">${body}</a>`;
+      return `<article class="stat">${body}</article>`;
+    }
+
+    async function load() {
+      const cards = document.getElementById('cards');
+      cards.innerHTML = '<p class="state">Cargando…</p>';
+      Session.replaceQuery({ from: form.from.value, to: form.to.value });
+      try {
+        const data = await Api.get('/api/admin/dashboard', {
+          query: Fmt.rangeQuery(form.from.value, form.to.value),
+        });
+        const drivers = data.drivers || {};
+        document.getElementById('period').textContent = data.period
+          ? `Periodo ${Fmt.when(data.period.from)} – ${Fmt.when(data.period.to)}`
+          : '';
+        cards.innerHTML = [
+          card('Conductores', drivers.total, [
+            `${Fmt.num(drivers.approved)} aprobados`,
+            `${Fmt.num(drivers.pending)} pendientes`,
+            `${Fmt.num(drivers.online)} en línea`,
+          ]),
+          card('Vehículos activos', data.vehiclesActive),
+          card('Clientes', data.clients),
+          card('Viajes del periodo', data.trips && data.trips.requested),
+          card('En curso', data.trips && data.trips.inProgress),
+          card('Finalizados', data.trips && data.trips.completed),
+          card('Cancelados', data.trips && data.trips.cancelled),
+          `<article class="stat"><h2>Ingresos en efectivo</h2>${Fmt.income(data.income && data.income.cash)}</article>`,
+          `<article class="stat"><h2>Ingresos en línea</h2>${Fmt.income(data.income && data.income.gateway)}</article>`,
+          card('Alertas abiertas', data.alertsOpen, null, 'alerts.html'),
+        ].join('');
+      } catch (err) {
+        cards.innerHTML = '<p class="state">No se pudo cargar el inicio.</p>';
+        Session.fail(err);
+      }
+    }
+
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      if (form.from.value > form.to.value) {
+        Session.toast('El rango de fechas está invertido');
+        return;
+      }
+      load();
+    });
+    load();
+  </script>
+</body>
+</html>

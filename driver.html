@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Conductor · SEU</title>
+  <link rel="icon" href="assets/logo.png">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <main id="page" hidden>
+    <header class="page-head">
+      <div>
+        <p class="eyebrow"><a href="drivers.html">Conductores</a></p>
+        <h1 id="title">Conductor</h1>
+      </div>
+      <div id="badges" class="actions"></div>
+    </header>
+    <div id="detail"><p class="state">Cargando…</p></div>
+  </main>
+  <script src="js/format.js"></script>
+  <script src="js/session.js"></script>
+  <script src="js/api.js"></script>
+  <script>
+    if (!Session.mount('drivers')) throw new Error('sin sesión');
+    const id = Session.query().get('id');
+    const root = document.getElementById('detail');
+
+    function locationLine(point) {
+      if (!point) return '—';
+      const href = `https://www.openstreetmap.org/?mlat=${encodeURIComponent(point.lat)}&mlon=${encodeURIComponent(point.lng)}`;
+      return `<a href="${href}" target="_blank" rel="noopener">${Fmt.esc(point.lat)}, ${Fmt.esc(point.lng)}</a><br><span class="hint">${Fmt.esc(Fmt.when(point.at))}</span>`;
+    }
+
+    function render(driver) {
+      document.getElementById('title').textContent = driver.fullName || 'Conductor';
+      document.title = `${driver.fullName || 'Conductor'} · SEU`;
+      document.getElementById('badges').innerHTML = `${Fmt.driver(driver.status)} ${Fmt.operational(driver.operational)}`;
+      const vehicles = (driver.vehicles || []).map((item) => (
+        `<li>${Fmt.text(item.plate)} · ${Fmt.text(item.brand)} ${Fmt.text(item.model)} · ${Fmt.esc(Fmt.category(item.category))} · ${Fmt.vehicle(item.status)}</li>`
+      )).join('') || '<li>Sin vehículos</li>';
+      const trip = driver.activeTripId
+        ? `<a href="trip.html?id=${encodeURIComponent(driver.activeTripId)}">Ver viaje activo</a>`
+        : '—';
+      let statusAction = '<p class="hint">Pendiente, rechazado o suspendido se cambia con la revisión.</p>';
+      if (driver.status === 'approved') {
+        statusAction = '<button class="btn ghost" type="submit" data-status="inactive">Desactivar</button>';
+      } else if (driver.status === 'inactive') {
+        statusAction = '<button class="btn" type="submit" data-status="active">Activar</button>';
+      }
+      root.innerHTML = `
+        <section class="card">
+          <dl class="facts">
+            <div><dt>Documento</dt><dd>${Fmt.text(driver.document)}</dd></div>
+            <div><dt>Correo</dt><dd>${Fmt.text(driver.email)}</dd></div>
+            <div><dt>Teléfono</dt><dd>${Fmt.text(driver.phone)}</dd></div>
+            <div><dt>Ciudad</dt><dd>${Fmt.text(driver.city)}</dd></div>
+            <div><dt>País</dt><dd>${Fmt.text(driver.countryCode)}</dd></div>
+            <div><dt>Calificación</dt><dd>${Fmt.esc(Fmt.rating(driver.ratingAvg, driver.ratingCount))}</dd></div>
+            <div><dt>Deuda en efectivo</dt><dd>${Fmt.esc(Fmt.money(driver.cashCommissionOwed, Fmt.currencyFor(driver.countryCode)))}</dd></div>
+            <div><dt>Motivo</dt><dd>${Fmt.text(driver.reviewReason)}</dd></div>
+            <div><dt>Última ubicación</dt><dd>${locationLine(driver.lastLocation)}</dd></div>
+            <div><dt>Viaje activo</dt><dd>${trip}</dd></div>
+          </dl>
+        </section>
+        <section class="card">
+          <h2>Vehículos</h2>
+          <ul>${vehicles}</ul>
+        </section>
+        <form id="edit" class="card stack-form">
+          <h2>Datos</h2>
+          <div class="filters">
+            <label class="field">Nombre <input name="fullName" required value="${Fmt.esc(driver.fullName || '')}"></label>
+            <label class="field">Teléfono <input name="phone" required value="${Fmt.esc(driver.phone || '')}"></label>
+            <label class="field">Ciudad <input name="city" required value="${Fmt.esc(driver.city || '')}"></label>
+            <label class="field tight">País <input name="countryCode" maxlength="2" required value="${Fmt.esc(driver.countryCode || '')}"></label>
+            <label class="field">Documento <input name="document" required value="${Fmt.esc(driver.document || '')}"></label>
+          </div>
+          <button class="btn" type="submit">Guardar</button>
+        </form>
+        <form id="review" class="card stack-form">
+          <h2>Revisión</h2>
+          <label class="field">Motivo
+            <input name="reason" placeholder="Obligatorio para rechazar o suspender">
+          </label>
+          <div class="actions">
+            <button class="btn" type="submit" data-action="approve">Aprobar</button>
+            <button class="btn warn" type="submit" data-action="reject">Rechazar</button>
+            <button class="btn danger" type="submit" data-action="suspend">Suspender</button>
+          </div>
+        </form>
+        <form id="active" class="card stack-form">
+          <h2>Actividad</h2>
+          ${statusAction}
+        </form>
+      `;
+      root.querySelector('#edit').addEventListener('submit', (event) => {
+        event.preventDefault();
+        const form = event.currentTarget;
+        Session.lock(form.querySelector('button'), async () => {
+          try {
+            render(await Api.patch(`/api/admin/drivers/${id}`, {
+              fullName: form.fullName.value.trim(),
+              phone: form.phone.value.trim(),
+              city: form.city.value.trim(),
+              countryCode: form.countryCode.value.trim().toUpperCase(),
+              document: form.document.value.trim(),
+            }));
+            Session.toast('Datos guardados', 'ok');
+          } catch (err) {
+            Session.fail(err);
+            if (err.errorCode === 'INVALID_STATE') load();
+          }
+        });
+      });
+      root.querySelector('#review').addEventListener('submit', (event) => {
+        event.preventDefault();
+        const form = event.currentTarget;
+        const button = event.submitter;
+        const action = button.dataset.action;
+        const reason = form.reason.value.trim();
+        if (action !== 'approve' && !reason) {
+          Session.toast('El motivo es obligatorio');
+          return;
+        }
+        Session.lock(button, async () => {
+          try {
+            render(await Api.post(`/api/admin/drivers/${id}/review`, { action, reason }));
+            Session.toast('Revisión guardada', 'ok');
+          } catch (err) {
+            Session.fail(err);
+            if (err.errorCode === 'INVALID_STATE') load();
+          }
+        });
+      });
+      const active = root.querySelector('#active');
+      active.addEventListener('submit', (event) => {
+        event.preventDefault();
+        const button = event.submitter;
+        if (!button || !button.dataset.status) return;
+        Session.lock(button, async () => {
+          try {
+            render(await Api.post(`/api/admin/drivers/${id}/status`, { status: button.dataset.status }));
+            Session.toast('Estado actualizado', 'ok');
+          } catch (err) {
+            Session.fail(err);
+            if (err.errorCode === 'INVALID_STATE') load();
+          }
+        });
+      });
+    }
+
+    async function load() {
+      if (!id) {
+        root.innerHTML = '<p class="state">Falta el conductor.</p>';
+        return;
+      }
+      root.innerHTML = '<p class="state">Cargando…</p>';
+      try {
+        render(await Api.get(`/api/admin/drivers/${id}`));
+      } catch (err) {
+        root.innerHTML = '<p class="state">No se pudo cargar la ficha.</p>';
+        Session.fail(err);
+      }
+    }
+
+    load();
+  </script>
+</body>
+</html>

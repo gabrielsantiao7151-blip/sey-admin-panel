@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Vehículos · SEU</title>
+  <link rel="icon" href="assets/logo.png">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <main id="page" hidden>
+    <header class="page-head">
+      <div>
+        <p class="eyebrow">Flota</p>
+        <h1>Vehículos</h1>
+      </div>
+      <button type="button" class="btn" id="new-vehicle">Nuevo vehículo</button>
+    </header>
+    <div class="split">
+      <div>
+        <form id="filters" class="filters">
+          <label class="field">Estado <select name="status"></select></label>
+          <label class="field">Conductor <select name="driverId"></select></label>
+          <button class="btn" type="submit">Filtrar</button>
+        </form>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Placa</th><th>Marca</th><th>Modelo</th><th>Año</th>
+                <th>Color</th><th>Categoría</th><th>Conductor</th><th>Estado</th>
+              </tr>
+            </thead>
+            <tbody id="rows"></tbody>
+          </table>
+        </div>
+        <nav id="pager" class="pager"></nav>
+      </div>
+      <aside id="editor" class="panel">
+        <h2 id="editor-title">Nuevo vehículo</h2>
+        <form id="editor-form" class="stack-form"></form>
+      </aside>
+    </div>
+  </main>
+  <script src="js/format.js"></script>
+  <script src="js/session.js"></script>
+  <script src="js/api.js"></script>
+  <script>
+    if (!Session.mount('vehicles')) throw new Error('sin sesión');
+    const STORED_STATUS = {
+      available: ['Disponible', 'ok'],
+      assigned: ['Asignado', 'info'],
+      out_of_service: ['Fuera de servicio', 'warn'],
+      blocked: ['Bloqueado', 'danger'],
+    };
+    const filters = document.getElementById('filters');
+    const form = document.getElementById('editor-form');
+    filters.status.innerHTML = Fmt.selectOptions(STORED_STATUS, '', 'Todos');
+    const initial = Session.query();
+    if (initial.get('status')) filters.status.value = initial.get('status');
+    let page = Number(initial.get('page')) || 1;
+    let drivers = [];
+    let current = null;
+
+    function driverChoices(selected, emptyLabel) {
+      const extra = selected && !drivers.some((item) => item.id === selected)
+        ? `<option value="${Fmt.esc(selected)}">Conductor asignado</option>` : '';
+      return `<option value="">${Fmt.esc(emptyLabel)}</option>${extra}` + drivers.map((item) => (
+        `<option value="${Fmt.esc(item.id)}"${item.id === selected ? ' selected' : ''}>${Fmt.esc(item.fullName)}</option>`
+      )).join('');
+    }
+
+    function paintEditor(vehicle) {
+      current = vehicle;
+      document.getElementById('editor-title').textContent = vehicle ? vehicle.plate : 'Nuevo vehículo';
+      const value = vehicle || {};
+      form.innerHTML = `
+        <label class="field">Placa <input name="plate" required value="${Fmt.esc(value.plate || '')}" placeholder="ABC123"></label>
+        <label class="field">Marca <input name="brand" required value="${Fmt.esc(value.brand || '')}"></label>
+        <label class="field">Modelo <input name="model" required value="${Fmt.esc(value.model || '')}"></label>
+        <label class="field">Año <input name="year" type="number" min="1990" required value="${Fmt.esc(value.year || '')}"></label>
+        <label class="field">Color <input name="color" required value="${Fmt.esc(value.color || '')}"></label>
+        <label class="field">Categoría
+          <select name="category">${Fmt.selectOptions(Fmt.CATEGORY, value.category || 'standard')}</select>
+        </label>
+        ${vehicle ? '' : `<label class="field">Asignar al crear <select name="driverId">${driverChoices('', 'Sin conductor')}</select></label>`}
+        <button class="btn" type="submit">${vehicle ? 'Guardar' : 'Crear vehículo'}</button>
+        ${vehicle ? `
+          <h3>Asignación</h3>
+          <p class="hint">${value.driverName ? Fmt.esc(value.driverName) : 'Sin conductor'}${value.screenStatus === 'in_trip' ? ' · En viaje ahora' : ''}</p>
+          <label class="field">Conductor <select name="assignDriver">${driverChoices(value.driverId || '', 'Sin conductor')}</select></label>
+          <div class="actions">
+            <button class="btn small" type="button" id="assign">Asignar</button>
+            <button class="btn ghost small" type="button" id="unassign">Quitar</button>
+          </div>
+          <h3>Estado guardado</h3>
+          <label class="field">Estado
+            <select name="nextStatus">
+              ${Fmt.selectOptions(STORED_STATUS, value.status || 'available')}
+            </select>
+          </label>
+          <button class="btn ghost small" type="button" id="apply-status">Aplicar estado</button>
+          <p class="hint">Fuera de servicio y bloqueado abren una alerta. Si todavía tiene conductor, quita la asignación antes de marcarlo disponible.</p>
+        ` : '<p class="hint">La placa se guarda en mayúsculas, solo letras y números.</p>'}
+      `;
+      if (!vehicle) return;
+      form.querySelector('#assign').addEventListener('click', () => {
+        const driverId = form.assignDriver.value;
+        if (!driverId) {
+          Session.toast('Elige un conductor');
+          return;
+        }
+        Session.lock(form.querySelector('#assign'), async () => {
+          try {
+            await Api.post(`/api/admin/vehicles/${vehicle.id}/assign`, { driverId });
+            Session.toast('Vehículo asignado', 'ok');
+            load();
+          } catch (err) {
+            Session.fail(err);
+          }
+        });
+      });
+      form.querySelector('#unassign').addEventListener('click', () => {
+        Session.lock(form.querySelector('#unassign'), async () => {
+          try {
+            await Api.post(`/api/admin/vehicles/${vehicle.id}/unassign`, {});
+            Session.toast('Asignación quitada', 'ok');
+            load();
+          } catch (err) {
+            Session.fail(err);
+          }
+        });
+      });
+      form.querySelector('#apply-status').addEventListener('click', () => {
+        const status = form.nextStatus.value;
+        if (status === 'available' && vehicle.driverId) {
+          Session.toast('Quita la asignación antes de marcarlo disponible');
+          return;
+        }
+        if (status === 'assigned' && !vehicle.driverId) {
+          Session.toast('Asigna un conductor antes de marcarlo asignado');
+          return;
+        }
+        Session.lock(form.querySelector('#apply-status'), async () => {
+          try {
+            await Api.post(`/api/admin/vehicles/${vehicle.id}/status`, { status });
+            Session.toast('Estado actualizado', 'ok');
+            load();
+          } catch (err) {
+            Session.fail(err);
+          }
+        });
+      });
+    }
+
+    function paint(result) {
+      const items = (result && result.items) || [];
+      const body = document.getElementById('rows');
+      if (!items.length) body.innerHTML = Session.stateRow(8, 'No hay resultados');
+      else {
+        body.innerHTML = items.map((item) => `
+          <tr data-id="${Fmt.esc(item.id)}" tabindex="0" class="${current && current.id === item.id ? 'selected' : ''}">
+            <td>${Fmt.text(item.plate)}</td>
+            <td>${Fmt.text(item.brand)}</td>
+            <td>${Fmt.text(item.model)}</td>
+            <td>${Fmt.text(item.year)}</td>
+            <td>${Fmt.text(item.color)}</td>
+            <td>${Fmt.esc(Fmt.category(item.category))}</td>
+            <td>${Fmt.text(item.driverName)}</td>
+            <td>${Fmt.vehicle(item.screenStatus || item.status)}</td>
+          </tr>
+        `).join('');
+      }
+      body.querySelectorAll('tr[data-id]').forEach((row) => {
+        row.addEventListener('click', () => openVehicle(row.dataset.id, items));
+      });
+      Session.renderPager(document.getElementById('pager'), result || { page, total: 0, limit: Session.PAGE }, (next) => {
+        page = next;
+        load();
+      });
+      return items;
+    }
+
+    function openVehicle(id, items) {
+      const vehicle = items.find((item) => item.id === id);
+      if (vehicle) paintEditor(vehicle);
+    }
+
+    async function load() {
+      document.getElementById('rows').innerHTML = Session.stateRow(8, 'Cargando…');
+      const query = {
+        status: filters.status.value,
+        driverId: filters.driverId.value,
+        page,
+        limit: Session.PAGE,
+      };
+      Session.replaceQuery({ status: query.status, driverId: query.driverId, page });
+      try {
+        const result = await Api.get('/api/admin/vehicles', { query });
+        const items = paint(result);
+        if (current) {
+          const fresh = items.find((item) => item.id === current.id);
+          if (fresh) paintEditor(fresh);
+        }
+      } catch (err) {
+        document.getElementById('rows').innerHTML = Session.stateRow(8, 'No se pudo cargar');
+        Session.fail(err);
+      }
+    }
+
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const button = form.querySelector('button[type="submit"]');
+      Session.lock(button, async () => {
+        const body = {
+          plate: form.plate.value.trim(),
+          brand: form.brand.value.trim(),
+          model: form.model.value.trim(),
+          year: Number(form.year.value),
+          color: form.color.value.trim(),
+          category: form.category.value,
+        };
+        try {
+          if (current) {
+            await Api.patch(`/api/admin/vehicles/${current.id}`, body);
+            Session.toast('Vehículo actualizado', 'ok');
+          } else {
+            if (form.driverId.value) body.driverId = form.driverId.value;
+            await Api.post('/api/admin/vehicles', body);
+            Session.toast('Vehículo creado', 'ok');
+            paintEditor(null);
+          }
+          load();
+        } catch (err) {
+          Session.fail(err);
+        }
+      });
+    });
+
+    filters.addEventListener('submit', (event) => {
+      event.preventDefault();
+      page = 1;
+      load();
+    });
+    document.getElementById('new-vehicle').addEventListener('click', () => paintEditor(null));
+
+    async function boot() {
+      try {
+        const approved = await Api.get('/api/admin/drivers', { query: { status: 'approved', limit: 100 } });
+        drivers = approved.items || [];
+        filters.driverId.innerHTML = driverChoices(initial.get('driverId') || '', 'Todos');
+        if (approved.total > drivers.length) {
+          filters.insertAdjacentHTML('beforebegin', '<p class="hint">Hay más de 100 conductores aprobados. El listado del filtro muestra los primeros 100.</p>');
+        }
+      } catch (err) {
+        filters.driverId.innerHTML = '<option value="">No se pudieron cargar</option>';
+        Session.fail(err);
+      }
+      paintEditor(null);
+      load();
+    }
+    boot();
+  </script>
+</body>
+</html>

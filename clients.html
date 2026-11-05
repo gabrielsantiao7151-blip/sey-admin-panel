@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Clientes · SEU</title>
+  <link rel="icon" href="assets/logo.png">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <main id="page" hidden>
+    <header class="page-head">
+      <div>
+        <p class="eyebrow">Cuentas</p>
+        <h1>Clientes</h1>
+      </div>
+    </header>
+    <form id="filters" class="filters">
+      <label class="field grow">Buscar <input name="q" placeholder="Nombre, teléfono o correo"></label>
+      <button class="btn" type="submit">Filtrar</button>
+    </form>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Nombre</th><th>Teléfono</th><th>Correo</th><th>Cuenta</th>
+            <th>Viajes completados</th><th>Como conductor</th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+    <nav id="pager" class="pager"></nav>
+  </main>
+  <script src="js/format.js"></script>
+  <script src="js/session.js"></script>
+  <script src="js/api.js"></script>
+  <script>
+    if (!Session.mount('clients')) throw new Error('sin sesión');
+    const filters = document.getElementById('filters');
+    const initial = Session.query();
+    if (initial.get('q')) filters.q.value = initial.get('q');
+    let page = Number(initial.get('page')) || 1;
+
+    async function load() {
+      document.getElementById('rows').innerHTML = Session.stateRow(6, 'Cargando…');
+      const query = { q: filters.q.value.trim(), page, limit: Session.PAGE };
+      Session.replaceQuery(query);
+      try {
+        const result = await Api.get('/api/admin/clients', { query });
+        const items = (result && result.items) || [];
+        const body = document.getElementById('rows');
+        if (!items.length) body.innerHTML = Session.stateRow(6, 'No hay resultados');
+        else {
+          body.innerHTML = items.map((item) => `
+            <tr data-href="client.html?id=${encodeURIComponent(item.id)}" tabindex="0">
+              <td>${Fmt.text(item.fullName)}</td>
+              <td>${Fmt.text(item.phone)}</td>
+              <td>${Fmt.text(item.email)}</td>
+              <td>${Fmt.account(item.status)}</td>
+              <td>${Fmt.num(item.tripsCompleted)}</td>
+              <td>${item.driverStatus ? Fmt.driver(item.driverStatus) : '—'}</td>
+            </tr>
+          `).join('');
+        }
+        Session.renderPager(document.getElementById('pager'), result || { page, total: 0, limit: Session.PAGE }, (next) => {
+          page = next;
+          load();
+        });
+      } catch (err) {
+        document.getElementById('rows').innerHTML = Session.stateRow(6, 'No se pudo cargar');
+        Session.fail(err);
+      }
+    }
+
+    filters.addEventListener('submit', (event) => {
+      event.preventDefault();
+      page = 1;
+      load();
+    });
+    load();
+  </script>
+</body>
+</html>
