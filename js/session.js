@@ -164,7 +164,7 @@ window.Session = (function () {
       if (window.Api) Api.logout();
     });
     const baseInput = document.getElementById('base-url');
-    baseInput.value = window.Api ? Api.base() : (localStorage.getItem('seu_base') || 'http://localhost:3000');
+    baseInput.value = window.Api ? Api.base() : (localStorage.getItem('seu_base') || 'https://seu-backend.vercel.app');
     baseInput.addEventListener('change', () => {
       if (!window.Api) return;
       Api.setBase(baseInput.value);

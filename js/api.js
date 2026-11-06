@@ -1,10 +1,15 @@
 window.Api = (function () {
   const BASE_KEY = 'seu_base';
-  const DEFAULT_BASE = 'http://localhost:3000';
+  const DEFAULT_BASE = 'https://seu-backend.vercel.app';
   let refreshTask = null;
 
   function base() {
-    return (localStorage.getItem(BASE_KEY) || DEFAULT_BASE).replace(/\/$/, '');
+    const saved = (localStorage.getItem(BASE_KEY) || '').replace(/\/$/, '');
+    if (!saved || saved === 'http://localhost:3000') {
+      localStorage.setItem(BASE_KEY, DEFAULT_BASE);
+      return DEFAULT_BASE;
+    }
+    return saved;
   }
 
   function setBase(url) {
