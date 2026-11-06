@@ -14,6 +14,7 @@ window.Fmt = (function () {
   };
 
   const DRIVER = {
+    draft: ['Borrador', 'muted'],
     pending: ['Pendiente', 'warn'],
     approved: ['Aprobado', 'ok'],
     rejected: ['Rechazado', 'danger'],
@@ -43,8 +44,8 @@ window.Fmt = (function () {
   };
 
   const CATEGORY = {
-    economy: 'Económico',
-    standard: 'Estándar',
+    normal: 'Normal',
+    comfort: 'Comfort',
     premium: 'Premium',
   };
 
@@ -248,7 +249,7 @@ window.Fmt = (function () {
     operational: (value) => badge(OPERATIONAL, value),
     vehicle: (value) => badge(VEHICLE, value),
     mapState: (value) => badge(MAP_STATE, value),
-    category: (value) => labelOf(CATEGORY, value),
+    category: (value) => ({ economy: 'Normal', standard: 'Comfort' }[value] || labelOf(CATEGORY, value)),
     payMethod: (value) => labelOf(PAYMENT_METHOD, value),
     payStatus: (value) => badge(PAYMENT_STATUS, value),
     alert: (value) => labelOf(ALERT, value),

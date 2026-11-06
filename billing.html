@@ -79,6 +79,12 @@
       <form id="pay-filters" class="filters">
         <label class="field">Estado <select name="status"></select></label>
         <label class="field">Método <select name="method"></select></label>
+        <label class="field">Libro
+          <select name="ledger">
+            <option value="">Operación</option>
+            <option value="test">Prueba</option>
+          </select>
+        </label>
         <button class="btn" type="submit">Filtrar</button>
       </form>
       <div class="table-wrap">
@@ -92,7 +98,7 @@
 
     <section class="card">
       <div class="section-title"><h2>Pasarela</h2></div>
-      <p class="hint">Hoy ningún proveedor cobra de verdad. Si queda lista, la app muestra “Pago en línea”, pero el cobro responde que falta el adaptador. Déjala apagada hasta elegir el proveedor.</p>
+      <p class="hint">La pasarela real no está conectada. No se marca el cobro en línea como activo. Si quedara encendida, la app muestra “Pago en línea”, pero el cobro responde que falta el adaptador.</p>
       <form id="gateway" class="stack-form">
         <p id="gateway-state" class="hint"></p>
         <div class="filters">
@@ -100,7 +106,7 @@
           <label class="field">Llave pública <input name="publicKey" autocomplete="off"></label>
           <label class="field">Llave secreta <input name="secretKey" type="password" autocomplete="new-password" placeholder="Vacío no borra la anterior"></label>
           <label class="field">Secreto del webhook <input name="webhookSecret" type="password" autocomplete="new-password" placeholder="Vacío no borra el anterior"></label>
-          <label class="check"><input name="enabled" type="checkbox"> <span>Encendida</span></label>
+          <label class="check"><input name="enabled" type="checkbox" disabled> <span>Encendida</span></label>
         </div>
         <p id="webhook" class="hint"></p>
         <div class="actions">
@@ -193,20 +199,25 @@
       const body = document.getElementById('pay-rows');
       body.innerHTML = Session.stateRow(6, 'Cargando…');
       const rangeQuery = Fmt.rangeQuery(range.from.value, range.to.value);
-      const [summary, data] = await Promise.all([
-        Api.get('/api/admin/payments/summary', { query: rangeQuery }),
-        Api.get('/api/admin/payments', {
-          query: Object.assign({
-            page: payPage,
-            limit: Session.PAGE,
-            status: payFilters.status.value,
-            method: payFilters.method.value,
-          }, rangeQuery),
-        }),
-      ]);
-      const lines = (summary.rows || []).map((row) =>
-        `${Fmt.payMethod(row.method)} · ${row.status} · ${Fmt.money(row.amount, row.currency)} (${Fmt.num(row.count)})`);
-      document.getElementById('pay-summary').textContent = lines.length ? lines.join('   ·   ') : '$ 0';
+      const testLedger = payFilters.ledger.value === 'test';
+      const listQuery = Object.assign({
+        page: payPage,
+        limit: Session.PAGE,
+        status: payFilters.status.value,
+        method: payFilters.method.value,
+      }, rangeQuery);
+      if (testLedger) listQuery.ledger = 'test';
+      const summary = testLedger ? null : await Api.get('/api/admin/payments/summary', { query: rangeQuery });
+      const data = await Api.get('/api/admin/payments', { query: listQuery });
+      if (testLedger) {
+        document.getElementById('pay-summary').textContent = 'Pagos de prueba. No se suman a la deuda ni a los reportes.';
+      } else {
+        const lines = (summary.rows || []).map((row) =>
+          `${Fmt.payMethod(row.method)} · ${row.status} · ${Fmt.money(row.amount, row.currency)} (${Fmt.num(row.count)})`);
+        document.getElementById('pay-summary').textContent = lines.length
+          ? `${lines.join('   ·   ')}   ·   Sin pagos de prueba.`
+          : 'Sin pagos de operación. Los de prueba no se suman.';
+      }
       const items = data.items || [];
       if (!items.length) blank(body, 6);
       else body.innerHTML = items.map((item) => `
@@ -230,9 +241,11 @@
       form.publicKey.value = data.publicKey || '';
       form.secretKey.value = '';
       form.webhookSecret.value = '';
-      form.enabled.checked = Boolean(data.enabled);
+      form.enabled.checked = false;
+      form.enabled.disabled = true;
       document.getElementById('gateway-state').textContent = [
-        data.ready ? 'Lista para mostrarse en la app' : 'Apagada o incompleta',
+        data.enabled ? 'El servidor la tiene encendida. Guardar la deja apagada.' : 'Apagada',
+        data.ready ? 'lista para mostrarse en la app' : 'incompleta',
         data.hasSecretKey ? 'hay llave secreta' : 'sin llave secreta',
         data.hasWebhookSecret ? 'hay secreto de webhook' : 'sin secreto de webhook',
       ].join(' · ');
@@ -266,7 +279,7 @@
       Session.lock(button, async () => {
         const body = {
           provider: form.provider.value.trim() || null,
-          enabled: form.enabled.checked,
+          enabled: false,
           publicKey: form.publicKey.value.trim(),
         };
         if (form.secretKey.value) body.secretKey = form.secretKey.value;

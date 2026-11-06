@@ -132,6 +132,10 @@ window.Api = (function () {
     return request(path, Object.assign({}, options, { method: 'PUT', body }));
   }
 
+  function remove(path) {
+    return request(path, { method: 'DELETE' });
+  }
+
   async function logout() {
     const refreshToken = Session.refreshToken();
     try {
@@ -143,5 +147,5 @@ window.Api = (function () {
     location.replace('login.html');
   }
 
-  return { base, setBase, fileUrl, request, get, post, patch, put, logout };
+  return { base, setBase, fileUrl, request, get, post, patch, put, remove, logout };
 }());

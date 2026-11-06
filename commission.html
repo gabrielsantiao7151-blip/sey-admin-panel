@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Comisión · SEU</title>
+  <link rel="icon" href="assets/logo.png">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <main id="page" hidden>
+    <header class="page-head">
+      <div>
+        <p class="eyebrow">Efectivo</p>
+        <h1>Comisión</h1>
+      </div>
+    </header>
+    <p class="hint">Son tres estados distintos. El recorrido es el estado del viaje. El pago dice si el pasajero pagó. La liquidación dice si esa comisión ya se cruzó con una transferencia. Una tarjeta de prueba no sale aquí y no baja ni sube este saldo.</p>
+    <form id="picker" class="filters">
+      <label class="field">Conductor <select name="driverId" required></select></label>
+      <button class="btn" type="submit">Ver saldo</button>
+    </form>
+    <p id="driver-note" class="hint"></p>
+
+    <section class="card" id="balance-card" hidden>
+      <article class="stat">
+        <h2 id="balance-title">Saldo</h2>
+        <p class="num" id="balance">$ 0</p>
+      </article>
+      <p class="hint">Solo comisión en efectivo todavía pendiente de cruzar.</p>
+    </section>
+
+    <section class="card" id="pending-card" hidden>
+      <div class="section-title"><h2>Carreras pendientes</h2></div>
+      <form id="settle" class="stack-form">
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th></th><th>Viaje</th><th>Terminó</th><th>Acordado</th><th>Comisión</th><th>%</th>
+                <th>Recorrido</th><th>Pago</th><th>Liquidación</th>
+              </tr>
+            </thead>
+            <tbody id="pending-rows"></tbody>
+          </table>
+        </div>
+        <div class="filters">
+          <label class="field tight">Importe <input name="amount" type="number" min="0" step="1" readonly></label>
+          <label class="field">Referencia <input name="reference" required placeholder="TRX-1042"></label>
+          <label class="field tight">Pagada <input name="paidAt" type="date" required></label>
+        </div>
+        <p class="hint">El importe tiene que ser la suma exacta de las comisiones marcadas. Una carrera de 11000 aporta 1100. La misma referencia por segunda vez devuelve la liquidación ya guardada y no baja el saldo otra vez. Dos envíos a la vez sobre las mismas carreras dejan una sola liquidación; el otro responde 409.</p>
+        <button class="btn" type="submit">Registrar transferencia</button>
+      </form>
+    </section>
+
+    <section class="card" id="done-card" hidden>
+      <div class="section-title"><h2>Registradas</h2></div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Fecha</th><th>Referencia</th><th>Importe</th><th>Pagada</th><th>Carreras</th><th>Estado</th></tr>
+          </thead>
+          <tbody id="done-rows"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+  <script src="js/format.js"></script>
+  <script src="js/session.js"></script>
+  <script src="js/api.js"></script>
+  <script>
+    if (!Session.mount('commission')) throw new Error('sin sesión');
+    const picker = document.getElementById('picker');
+    const settle = document.getElementById('settle');
+    const initial = Session.query().get('driverId') || '';
+    settle.paidAt.value = Fmt.todayUtc();
+    let pending = [];
+    let recorded = [];
+    const SETTLEMENT = {
+      pending: ['Pendiente', 'warn'],
+      settled: ['Cruzada', 'ok'],
+      recording: ['Registrando', 'info'],
+      recorded: ['Registrada', 'ok'],
+    };
+
+    function selectedTrips() {
+      return [...settle.querySelectorAll('input[name="tripId"]:checked')].map((box) => box.value);
+    }
+
+    function refreshAmount() {
+      const ids = new Set(selectedTrips());
+      const sum = pending.filter((item) => ids.has(item.tripId)).reduce((total, item) => total + Number(item.commission || 0), 0);
+      settle.amount.value = ids.size ? String(sum) : '';
+    }
+
+    function paintPending(rows) {
+      pending = rows || [];
+      const body = document.getElementById('pending-rows');
+      if (!pending.length) {
+        body.innerHTML = Session.stateRow(9, 'No hay comisión pendiente. Una tarjeta de prueba no sale aquí.');
+        settle.amount.value = '';
+        return;
+      }
+      body.innerHTML = pending.map((item) => `
+        <tr>
+          <td><input type="checkbox" name="tripId" value="${Fmt.esc(item.tripId)}"></td>
+          <td><a href="trip.html?id=${encodeURIComponent(item.tripId)}">${Fmt.text(item.publicCode)}</a></td>
+          <td>${Fmt.esc(Fmt.when(item.finishedAt))}</td>
+          <td>${Fmt.esc(Fmt.money(item.agreed, 'COP'))}</td>
+          <td>${Fmt.esc(Fmt.money(item.commission, 'COP'))}</td>
+          <td>${item.commissionPct == null ? '—' : `${Fmt.esc(item.commissionPct)}%`}</td>
+          <td>${Fmt.trip(item.tripStatus)}</td>
+          <td>${Fmt.payStatus(item.paymentStatus)}</td>
+          <td>${Fmt.badge(SETTLEMENT, item.settlementStatus)}</td>
+        </tr>`).join('');
+      body.querySelectorAll('input[name="tripId"]').forEach((box) => {
+        box.addEventListener('change', refreshAmount);
+      });
+      refreshAmount();
+    }
+
+    function paintRecorded(rows) {
+      recorded = rows || [];
+      const body = document.getElementById('done-rows');
+      if (!recorded.length) {
+        body.innerHTML = Session.stateRow(6, 'No hay liquidaciones registradas');
+        return;
+      }
+      body.innerHTML = recorded.map((item) => `
+        <tr>
+          <td>${Fmt.esc(Fmt.when(item.createdAt))}</td>
+          <td>${Fmt.text(item.reference)}</td>
+          <td>${Fmt.esc(Fmt.money(item.amount, 'COP'))}</td>
+          <td>${Fmt.esc(Fmt.when(item.paidAt))}</td>
+          <td>${Fmt.num((item.tripIds || []).length)}</td>
+          <td>${Fmt.badge(SETTLEMENT, item.status)}</td>
+        </tr>`).join('');
+    }
+
+    function showBlocks(on) {
+      document.getElementById('balance-card').hidden = !on;
+      document.getElementById('pending-card').hidden = !on;
+      document.getElementById('done-card').hidden = !on;
+    }
+
+    async function load(driverId) {
+      showBlocks(true);
+      document.getElementById('pending-rows').innerHTML = Session.stateRow(9, 'Cargando…');
+      document.getElementById('done-rows').innerHTML = Session.stateRow(6, 'Cargando…');
+      const [balance, settlements] = await Promise.all([
+        Api.get(`/api/admin/drivers/${driverId}/commission`),
+        Api.get('/api/admin/commission-settlements', { query: { driverId } }),
+      ]);
+      document.getElementById('balance-title').textContent = balance.fullName || 'Saldo';
+      document.getElementById('balance').textContent = Fmt.money(balance.balance, 'COP');
+      paintPending(balance.pending || []);
+      paintRecorded(Array.isArray(settlements) ? settlements : (settlements.items || []));
+      const url = new URL(location.href);
+      url.searchParams.set('driverId', driverId);
+      history.replaceState(null, '', url);
+    }
+
+    picker.addEventListener('submit', (event) => {
+      event.preventDefault();
+      load(picker.driverId.value).catch(Session.fail);
+    });
+
+    settle.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const driverId = picker.driverId.value;
+      const tripIds = selectedTrips();
+      if (!driverId) {
+        Session.toast('Elige un conductor');
+        return;
+      }
+      if (!tripIds.length) {
+        Session.toast('Marca las carreras que cubre la transferencia');
+        return;
+      }
+      const amount = Number(settle.amount.value);
+      const sum = pending.filter((item) => tripIds.includes(item.tripId)).reduce((total, item) => total + Number(item.commission || 0), 0);
+      if (amount !== sum) {
+        Session.toast(`El importe debe ser ${sum}`);
+        return;
+      }
+      const reference = settle.reference.value.trim();
+      const known = recorded.find((item) => item.reference === reference);
+      const button = settle.querySelector('button[type="submit"]');
+      Session.lock(button, async () => {
+        try {
+          const saved = await Api.post('/api/admin/commission-settlements', {
+            driverId,
+            amount,
+            reference,
+            paidAt: settle.paidAt.value,
+            tripIds,
+          });
+          const already = known && saved && saved.id === known.id;
+          const old = saved && saved.createdAt && (Date.now() - new Date(saved.createdAt).getTime() > 15000);
+          Session.toast(already || old
+            ? 'Esa referencia ya estaba registrada. El saldo no se volvió a bajar.'
+            : 'Liquidación registrada', 'ok');
+          settle.reference.value = '';
+          await load(driverId);
+        } catch (err) {
+          Session.fail(err);
+          if (err.errorCode === 'SETTLEMENT_CONFLICT') load(driverId).catch(Session.fail);
+        }
+      });
+    });
+
+    async function boot() {
+      try {
+        const data = await Api.get('/api/admin/drivers', { query: { limit: 100 } });
+        const drivers = data.items || [];
+        const extra = initial && !drivers.some((item) => item.id === initial)
+          ? `<option value="${Fmt.esc(initial)}">Conductor de la ficha</option>` : '';
+        picker.driverId.innerHTML = `<option value="">Elige</option>${extra}` + drivers.map((item) =>
+          `<option value="${Fmt.esc(item.id)}">${Fmt.esc(item.fullName)}</option>`).join('');
+        if (data.total > drivers.length) {
+          document.getElementById('driver-note').textContent = 'Hay más de 100 conductores. El listado muestra los primeros 100.';
+        }
+        if (initial) {
+          picker.driverId.value = initial;
+          await load(initial);
+        }
+      } catch (err) {
+        picker.driverId.innerHTML = '<option value="">No se pudieron cargar</option>';
+        Session.fail(err);
+      }
+    }
+    boot();
+  </script>
+</body>
+</html>

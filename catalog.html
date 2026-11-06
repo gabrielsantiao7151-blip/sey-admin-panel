@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Catálogo · SEU</title>
+  <link rel="icon" href="assets/logo.png">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <main id="page" hidden>
+    <header class="page-head">
+      <div>
+        <p class="eyebrow">Flota</p>
+        <h1>Catálogo</h1>
+      </div>
+    </header>
+    <p class="hint">Solo Colombia. Cada fila es una versión con tope Comfort o Premium. Normal no se carga: es el piso de lo que no está aquí. El año del auto solo baja la categoría: Premium hasta 5 años, Comfort hasta 8 y Normal hasta 15. Un Premium de 7 años queda Comfort; uno de 10 queda Normal; con más de 15 no opera. Crear o borrar reclasifica los vehículos que no tengan la categoría fijada por un admin.</p>
+    <div class="split">
+      <div>
+        <form id="filters" class="filters">
+          <label class="field">Marca <input name="brand" placeholder="Toyota"></label>
+          <label class="field">Modelo <input name="model" placeholder="Corolla"></label>
+          <button class="btn" type="submit">Filtrar</button>
+        </form>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Marca</th><th>Modelo</th><th>Versión</th><th>Tope</th><th></th>
+              </tr>
+            </thead>
+            <tbody id="rows"></tbody>
+          </table>
+        </div>
+      </div>
+      <aside class="panel">
+        <h2>Nueva versión</h2>
+        <form id="entry" class="stack-form">
+          <input type="hidden" name="countryCode" value="CO">
+          <label class="field">Marca <input name="brand" required placeholder="Toyota"></label>
+          <label class="field">Modelo <input name="model" required placeholder="Corolla"></label>
+          <label class="field">Versión <input name="version" required placeholder="XEI"></label>
+          <label class="field">Tope
+            <select name="maxCategory">
+              <option value="comfort">Comfort</option>
+              <option value="premium">Premium</option>
+            </select>
+          </label>
+          <p class="hint">Normal no es un tope. Si la versión no está en el catálogo, el carro queda en Normal.</p>
+          <button class="btn" type="submit">Agregar</button>
+        </form>
+      </aside>
+    </div>
+  </main>
+  <script src="js/format.js"></script>
+  <script src="js/session.js"></script>
+  <script src="js/api.js"></script>
+  <script>
+    if (!Session.mount('catalog')) throw new Error('sin sesión');
+    const filters = document.getElementById('filters');
+    const form = document.getElementById('entry');
+    const CEILING = { comfort: 'Comfort', premium: 'Premium' };
+
+    function rowsOf(value) {
+      if (Array.isArray(value)) return value;
+      if (value && Array.isArray(value.items)) return value.items;
+      return [];
+    }
+
+    function paint(value) {
+      const items = rowsOf(value);
+      const body = document.getElementById('rows');
+      if (!items.length) {
+        body.innerHTML = Session.stateRow(5, 'Todavía no hay versiones. Normal sigue siendo el piso.');
+        return;
+      }
+      body.innerHTML = items.map((item) => `
+        <tr>
+          <td>${Fmt.text(item.brand)}</td>
+          <td>${Fmt.text(item.model)}</td>
+          <td>${Fmt.text(item.version)}</td>
+          <td>${Fmt.esc(CEILING[item.maxCategory] || Fmt.category(item.maxCategory))}</td>
+          <td><button class="btn ghost small" type="button" data-id="${Fmt.esc(item.id)}">Quitar</button></td>
+        </tr>
+      `).join('');
+      body.querySelectorAll('button[data-id]').forEach((button) => {
+        button.addEventListener('click', () => {
+          const row = button.closest('tr');
+          const name = row ? row.cells[0].textContent + ' ' + row.cells[1].textContent + ' ' + row.cells[2].textContent : 'esta versión';
+          if (!window.confirm(`¿Quitar ${name}? Los vehículos sin categoría fijada se vuelven a calcular.`)) return;
+          Session.lock(button, async () => {
+            try {
+              await Api.remove(`/api/admin/vehicle-catalog/${button.dataset.id}`);
+              Session.toast('Versión eliminada. Se reclasificó lo que no estaba fijado.', 'ok');
+              load();
+            } catch (err) {
+              Session.fail(err);
+            }
+          });
+        });
+      });
+    }
+
+    async function load() {
+      document.getElementById('rows').innerHTML = Session.stateRow(5, 'Cargando…');
+      try {
+        paint(await Api.get('/api/admin/vehicle-catalog', {
+          query: {
+            countryCode: 'CO',
+            brand: filters.brand.value.trim(),
+            model: filters.model.value.trim(),
+          },
+        }));
+      } catch (err) {
+        document.getElementById('rows').innerHTML = Session.stateRow(5, 'No se pudo cargar');
+        Session.fail(err);
+      }
+    }
+
+    filters.addEventListener('submit', (event) => {
+      event.preventDefault();
+      load();
+    });
+
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const ceiling = form.maxCategory.value;
+      if (ceiling !== 'comfort' && ceiling !== 'premium') {
+        Session.toast('El tope solo puede ser Comfort o Premium');
+        return;
+      }
+      Session.lock(form.querySelector('button'), async () => {
+        try {
+          await Api.post('/api/admin/vehicle-catalog', {
+            countryCode: 'CO',
+            brand: form.brand.value.trim(),
+            model: form.model.value.trim(),
+            version: form.version.value.trim(),
+            maxCategory: ceiling,
+          });
+          form.reset();
+          form.countryCode.value = 'CO';
+          form.maxCategory.value = 'comfort';
+          Session.toast('Versión agregada. Se reclasificó lo que no estaba fijado.', 'ok');
+          load();
+        } catch (err) {
+          Session.fail(err);
+        }
+      });
+    });
+
+    load();
+  </script>
+</body>
+</html>

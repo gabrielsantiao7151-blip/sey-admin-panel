@@ -71,6 +71,15 @@
       )).join('');
     }
 
+    function categoryChoices(selected) {
+      const known = selected && Fmt.CATEGORY[selected] ? selected : 'normal';
+      let html = Fmt.selectOptions(Fmt.CATEGORY, known);
+      if (selected && !Fmt.CATEGORY[selected]) {
+        html += `<option value="${Fmt.esc(selected)}" selected>${Fmt.esc(Fmt.category(selected))}</option>`;
+      }
+      return html;
+    }
+
     function paintEditor(vehicle) {
       current = vehicle;
       document.getElementById('editor-title').textContent = vehicle ? vehicle.plate : 'Nuevo vehículo';
@@ -81,11 +90,21 @@
         <label class="field">Modelo <input name="model" required value="${Fmt.esc(value.model || '')}"></label>
         <label class="field">Año <input name="year" type="number" min="1990" required value="${Fmt.esc(value.year || '')}"></label>
         <label class="field">Color <input name="color" required value="${Fmt.esc(value.color || '')}"></label>
-        <label class="field">Categoría
-          <select name="category">${Fmt.selectOptions(Fmt.CATEGORY, value.category || 'standard')}</select>
-        </label>
+        ${vehicle ? `
+          <p class="hint">Categoría actual: ${Fmt.esc(Fmt.category(value.category))}${value.version ? ` · versión ${Fmt.esc(value.version)}` : ''}. ${value.categorySource === 'admin' ? 'Quedó fijada por un admin y el catálogo ya no la recalcula.' : 'La calcula el catálogo y el año. Premium hasta 5 años, Comfort hasta 8, Normal hasta 15. El año solo baja.'}</p>
+          <label class="field">Forzar categoría
+            <select name="forceCategory">${categoryChoices(value.category)}</select>
+          </label>
+          <button class="btn ghost small" type="button" id="force-category">Fijar categoría</button>
+          <p class="hint">Forzarla es decisión del admin. A partir de ahí no vuelve a bajar sola.</p>
+        ` : `
+          <label class="field">Categoría
+            <select name="category">${Fmt.selectOptions(Fmt.CATEGORY, 'comfort')}</select>
+          </label>
+          <p class="hint">Al crearlo a mano, esta categoría queda fija.</p>
+        `}
         ${vehicle ? '' : `<label class="field">Asignar al crear <select name="driverId">${driverChoices('', 'Sin conductor')}</select></label>`}
-        <button class="btn" type="submit">${vehicle ? 'Guardar' : 'Crear vehículo'}</button>
+        <button class="btn" type="submit">${vehicle ? 'Guardar datos' : 'Crear vehículo'}</button>
         ${vehicle ? `
           <h3>Asignación</h3>
           <p class="hint">${value.driverName ? Fmt.esc(value.driverName) : 'Sin conductor'}${value.screenStatus === 'in_trip' ? ' · En viaje ahora' : ''}</p>
@@ -105,6 +124,17 @@
         ` : '<p class="hint">La placa se guarda en mayúsculas, solo letras y números.</p>'}
       `;
       if (!vehicle) return;
+      form.querySelector('#force-category').addEventListener('click', () => {
+        Session.lock(form.querySelector('#force-category'), async () => {
+          try {
+            await Api.patch(`/api/admin/vehicles/${vehicle.id}`, { category: form.forceCategory.value });
+            Session.toast('Categoría fijada. Ya no se recalcula sola.', 'ok');
+            load();
+          } catch (err) {
+            Session.fail(err);
+          }
+        });
+      });
       form.querySelector('#assign').addEventListener('click', () => {
         const driverId = form.assignDriver.value;
         if (!driverId) {
@@ -163,10 +193,10 @@
           <tr data-id="${Fmt.esc(item.id)}" tabindex="0" class="${current && current.id === item.id ? 'selected' : ''}">
             <td>${Fmt.text(item.plate)}</td>
             <td>${Fmt.text(item.brand)}</td>
-            <td>${Fmt.text(item.model)}</td>
+            <td>${Fmt.text(item.model)}${item.version ? `<br><span class="hint">${Fmt.esc(item.version)}</span>` : ''}</td>
             <td>${Fmt.text(item.year)}</td>
             <td>${Fmt.text(item.color)}</td>
-            <td>${Fmt.esc(Fmt.category(item.category))}</td>
+            <td>${Fmt.esc(Fmt.category(item.category))}${item.categorySource === 'admin' ? '<br><span class="hint">Fijada</span>' : ''}</td>
             <td>${Fmt.text(item.driverName)}</td>
             <td>${Fmt.vehicle(item.screenStatus || item.status)}</td>
           </tr>
@@ -219,13 +249,13 @@
           model: form.model.value.trim(),
           year: Number(form.year.value),
           color: form.color.value.trim(),
-          category: form.category.value,
         };
         try {
           if (current) {
             await Api.patch(`/api/admin/vehicles/${current.id}`, body);
             Session.toast('Vehículo actualizado', 'ok');
           } else {
+            body.category = form.category.value;
             if (form.driverId.value) body.driverId = form.driverId.value;
             await Api.post('/api/admin/vehicles', body);
             Session.toast('Vehículo creado', 'ok');
